@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot } from "lucide-react";
+import { Bot, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { A2AConnectionInstructions } from "@/components/a2a-connection-instructions";
@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import { useInternalAgents } from "@/lib/agent.query";
 import { useHasPermissions } from "@/lib/auth/auth.query";
 
@@ -74,7 +75,18 @@ export default function A2APage() {
         </Select>
       </div>
 
-      {selectedAgent && <A2AConnectionInstructions agent={selectedAgent} />}
+      {selectedAgent && (
+        <>
+          <A2AConnectionInstructions agent={selectedAgent} />
+          <div className="flex justify-end pt-4 border-t border-muted/50">
+            <Link href={`/agents/triggers/a2a/chat?agentId=${selectedAgent.id}`} passHref>
+              <Button className="flex items-center gap-1.5 bg-gradient-to-r from-primary to-violet-500 hover:from-primary/95 hover:to-violet-500/95 text-primary-foreground shadow">
+                <Sparkles className="h-4 w-4 animate-pulse" /> Try A2A Stream Chat Console
+              </Button>
+            </Link>
+          </div>
+        </>
+      )}
     </div>
   );
 }

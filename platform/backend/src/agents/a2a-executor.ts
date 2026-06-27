@@ -3,7 +3,7 @@ import {
   type InteractionSource,
   PLAYWRIGHT_MCP_CATALOG_ID,
 } from "@archestra/shared";
-import type { ModelMessage, UIMessage, UserContent } from "ai";
+import type { ModelMessage, UIMessage, UserContent, UIMessageChunk } from "ai";
 import {
   consumeStream as consumeReadableStream,
   NoOutputGeneratedError,
@@ -32,6 +32,56 @@ import {
 } from "@/routes/chat/errors";
 import { executionSandboxRegistry } from "@/skills-sandbox/execution-sandbox-registry";
 import { resolveConversationLlmSelectionForAgent } from "@/utils/llm-resolution";
+
+import {
+  A2AProtocolRole,
+  A2AProtocolTaskState,
+  type A2AProtocolTaskStatusUpdateEvent,
+  type A2AProtocolPart,
+} from "./a2a/a2a-protocol";
+
+function extractProtocolPartsFromUIMessage(uiMessage: any): A2AProtocolPart[] {
+  const protocolParts: A2AProtocolPart[] = [];
+  const parts = uiMessage.parts || [];
+  for (const part of parts) {
+    if (part.type === "text") {
+      protocolParts.push({ text: part.text });
+    }
+  }
+  return protocolParts;
+}
+
+function extractProtocolPartsFromUIMessageChunk(chunk: any): A2AProtocolPart[] {
+  const protocolParts: A2AProtocolPart[] = [];
+  const parts = chunk.parts || [];
+  for (const part of parts) {
+    if (part.type === "text" && typeof part.text === "string") {
+      protocolParts.push({ text: part.text });
+    }
+  }
+  return protocolParts;
+}
+
+function extractApprovalRequestsFromUiMessage(uiMessage: any): any[] {
+  const approvalRequests: any[] = [];
+  const parts = uiMessage.parts || [];
+  for (const part of parts) {
+    if (
+      (part.state ?? "").startsWith("approval-") &&
+      part.approval?.id &&
+      part.type?.startsWith("tool-")
+    ) {
+      approvalRequests.push({
+        approvalId: part.approval.id,
+        toolCallId: part.toolCallId,
+        toolName: part.type.substring("tool-".length),
+        approved: Boolean(part.approval?.approved),
+        resolved: part.state === "approval-responded",
+      });
+    }
+  }
+  return approvalRequests;
+}
 
 /**
  * Source-agnostic attachment for A2A execution.
@@ -116,6 +166,12 @@ export interface A2AExecuteParams {
    *    in case of tool invocation approval.
    */
   originalUiMessages?: UIMessage[];
+
+  /** Optional callback to notify caller of A2A task status events */
+  onEvent?: (event: A2AProtocolTaskStatusUpdateEvent) => void;
+
+  /** Optional callback to notify caller of raw UI message chunks */
+  onUiMessageChunk?: (chunk: UIMessageChunk) => void;
 }
 
 /** @public — exported for testability */
@@ -312,32 +368,108 @@ export async function executeA2AMessage(
       const stream = runStream.result;
       getCapturedStreamError = runStream.getCapturedStreamError;
 
-      const uiMessageStreamConsumption = consumeReadableStream({
-        stream: stream.toUIMessageStream<UIMessage>({
-          originalMessages: params.originalUiMessages,
-          generateMessageId: () => crypto.randomUUID(),
-          onFinish: ({ responseMessage }) => {
-            responseUiMessage = responseMessage;
+      const taskId = params.isolationKey || crypto.randomUUID();
+
+      if (params.onEvent) {
+        // Emit initial Working state event
+        params.onEvent({
+          taskId,
+          status: {
+            state: A2AProtocolTaskState.Working,
+            timestamp: Date.now(),
           },
-          onError: (error) => {
-            // a nonexistent-tool call is recoverable: the SDK already feeds the
-            // tool-error back to the model and continues the loop, so return the
-            // recovery text as the part's errorText instead of killing the run
-            const unavailableToolError = getUnavailableToolErrorDetails(error);
-            if (unavailableToolError) {
-              logger.info(
-                { agentId: agent.id, unavailableToolError },
-                "Returning unavailable tool error as tool-level error in A2A execution",
-              );
-              return formatUnavailableToolErrorDetails(unavailableToolError);
-            }
-            logger.error(
-              { agentId: agent.id, error },
-              "Error stream.toUIMessageStream when parsing A2A execution response",
+          final: false,
+        });
+      }
+
+      const rawStream = stream.toUIMessageStream<UIMessage>({
+        originalMessages: params.originalUiMessages,
+        generateMessageId: () => crypto.randomUUID(),
+        onFinish: ({ responseMessage }) => {
+          responseUiMessage = responseMessage;
+          if (params.onEvent) {
+            const approvalRequests = extractApprovalRequestsFromUiMessage(responseMessage);
+            const state = approvalRequests.length > 0
+              ? A2AProtocolTaskState.InputRequired
+              : A2AProtocolTaskState.Completed;
+
+            params.onEvent({
+              taskId,
+              status: {
+                state,
+                message: {
+                  messageId: responseMessage.id,
+                  role: A2AProtocolRole.Agent,
+                  parts: extractProtocolPartsFromUIMessage(responseMessage),
+                },
+                timestamp: Date.now(),
+              },
+              final: true,
+              metadata: approvalRequests.length > 0 ? { approvalRequests } : undefined,
+            });
+          }
+        },
+        onError: (error) => {
+          if (params.onEvent) {
+            params.onEvent({
+              taskId,
+              status: {
+                state: A2AProtocolTaskState.Failed,
+                timestamp: Date.now(),
+              },
+              final: true,
+              metadata: { error: error instanceof Error ? error.message : String(error) },
+            });
+          }
+
+          // a nonexistent-tool call is recoverable: the SDK already feeds the
+          // tool-error back to the model and continues the loop, so return the
+          // recovery text as the part's errorText instead of killing the run
+          const unavailableToolError = getUnavailableToolErrorDetails(error);
+          if (unavailableToolError) {
+            logger.info(
+              { agentId: agent.id, unavailableToolError },
+              "Returning unavailable tool error as tool-level error in A2A execution",
             );
-            throw error;
-          },
-        }),
+            return formatUnavailableToolErrorDetails(unavailableToolError);
+          }
+          logger.error(
+            { agentId: agent.id, error },
+            "Error stream.toUIMessageStream when parsing A2A execution response",
+          );
+          throw error;
+        },
+      });
+
+      const pipedStream = (params.onEvent || params.onUiMessageChunk)
+        ? rawStream.pipeThrough(new TransformStream({
+            transform(chunk, controller) {
+              if (params.onUiMessageChunk) {
+                params.onUiMessageChunk(chunk);
+              }
+              if (params.onEvent) {
+                const protocolParts = extractProtocolPartsFromUIMessageChunk(chunk);
+                params.onEvent({
+                  taskId,
+                  status: {
+                    state: A2AProtocolTaskState.Working,
+                    message: {
+                      messageId: (chunk as any).id || crypto.randomUUID(),
+                      role: A2AProtocolRole.Agent,
+                      parts: protocolParts,
+                    },
+                    timestamp: Date.now(),
+                  },
+                  final: false,
+                });
+              }
+              controller.enqueue(chunk);
+            }
+          }))
+        : rawStream;
+
+      const uiMessageStreamConsumption = consumeReadableStream({
+        stream: pipedStream,
         onError: (error) => {
           logger.error(
             { agentId: agent.id, error },

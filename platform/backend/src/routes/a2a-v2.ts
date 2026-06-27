@@ -1,5 +1,6 @@
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
+import crypto from "node:crypto";
 import { type A2AActor, A2AError } from "@/agents/a2a/a2a-base";
 import { A2AManager } from "@/agents/a2a/a2a-manager";
 import {
@@ -7,6 +8,8 @@ import {
   A2AProtocolGetTaskRequestSchema,
   type A2AProtocolSendMessageRequest,
   A2AProtocolSendMessageRequestSchema,
+  type A2AProtocolTaskStatusUpdateEvent,
+  A2AProtocolRole,
 } from "@/agents/a2a/a2a-protocol";
 import config from "@/config";
 import { AgentModel } from "@/models";
@@ -15,6 +18,7 @@ import {
   validateMCPGatewayToken,
 } from "@/routes/mcp-gateway.utils";
 import { ApiError, UuidIdSchema } from "@/types";
+import { createUIMessageStreamResponse, type UIMessageChunk } from "ai";
 
 /**
  * A2A (Agent-to-Agent) Protocol routes
@@ -153,7 +157,7 @@ const a2aRoutes: FastifyPluginAsyncZod = async (fastify) => {
           },
         ],
         capabilities: {
-          streaming: false,
+          streaming: true,
           pushNotifications: false,
           stateTransitionHistory: false,
         },
@@ -195,6 +199,51 @@ const a2aRoutes: FastifyPluginAsyncZod = async (fastify) => {
               "Authorization header required. Use: Bearer <platform_token>",
           },
         });
+      }
+
+      const isStreaming =
+        request.headers.accept === "text/event-stream" ||
+        (request.body.method === "SendMessage" &&
+          request.body.params?.configuration?.streaming === true);
+
+      if (isStreaming) {
+        reply.raw.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        });
+
+        const onEvent = (event: A2AProtocolTaskStatusUpdateEvent) => {
+          const response = {
+            jsonrpc: "2.0" as const,
+            id,
+            result: event,
+          };
+          reply.raw.write(`data: ${JSON.stringify(response)}\n\n`);
+        };
+
+        try {
+          await router.request(agentId, token, request.body, onEvent);
+          reply.raw.end();
+        } catch (error) {
+          const errorCode =
+            error instanceof A2AV2RouterError || error instanceof A2AError
+              ? error.code
+              : -32603;
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          const errorResponse = {
+            jsonrpc: "2.0" as const,
+            id,
+            error: {
+              code: errorCode,
+              message: errorMessage,
+            },
+          };
+          reply.raw.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+          reply.raw.end();
+        }
+        return reply;
       }
 
       try {
@@ -241,6 +290,90 @@ const a2aRoutes: FastifyPluginAsyncZod = async (fastify) => {
           },
         });
       }
+    },
+  );
+
+  fastify.post(
+    `${endpoint}/:agentId/chat`,
+    {
+      schema: {
+        description: "Experimental A2A stream chat endpoint compatible with useChat",
+        tags: ["A2A"],
+        params: z.object({
+          agentId: UuidIdSchema,
+        }),
+        body: z.object({
+          messages: z.array(z.any()), // Accepts UIMessage[]
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { agentId } = request.params;
+      const { messages } = request.body;
+
+      // Extract token & auth
+      const token = extractBearerToken(request);
+      if (!token) {
+        throw new ApiError(
+          401,
+          "Authorization header required. Use: Bearer <platform_token>",
+        );
+      }
+
+      const agent = await AgentModel.findById(agentId);
+      if (!agent) {
+        throw new ApiError(404, "Agent not found");
+      }
+
+      const tokenAuth = await validateMCPGatewayToken(agent.id, token);
+      if (!tokenAuth) {
+        throw new ApiError(401, "Invalid or unauthorized token");
+      }
+
+      const actor = await router.resolveActor(agentId, token);
+
+      let streamController: ReadableStreamDefaultController<UIMessageChunk> | undefined;
+      const customStream = new ReadableStream<UIMessageChunk>({
+        start(controller) {
+          streamController = controller;
+        },
+      });
+
+      const lastMessage = messages[messages.length - 1];
+      const textContent = lastMessage?.content || "";
+
+      // Run executeA2AMessage in the background via the manager
+      router.getManager().sendMessage({
+        actor,
+        agentId,
+        request: {
+          message: {
+            messageId: crypto.randomUUID(),
+            role: A2AProtocolRole.User,
+            parts: [{ text: textContent }],
+          },
+        },
+        systemParams: {
+          sessionId: crypto.randomUUID(),
+        },
+        onUiMessageChunk: (chunk) => {
+          streamController?.enqueue(chunk);
+        },
+      }).then(() => {
+        streamController?.close();
+      }).catch((err) => {
+        streamController?.error(err);
+      });
+
+      const response = createUIMessageStreamResponse({
+        headers: { "Content-Encoding": "none" },
+        stream: customStream,
+      });
+
+      for (const [key, value] of response.headers.entries()) {
+        reply.header(key, value);
+      }
+      return reply.send(response.body);
     },
   );
 };
@@ -299,11 +432,20 @@ class A2AV2Router {
     this.manager = new A2AManager();
   }
 
-  async request(agentId: string, token: string, request: unknown) {
+  public getManager(): A2AManager {
+    return this.manager;
+  }
+
+  async request(
+    agentId: string,
+    token: string,
+    request: unknown,
+    onEvent?: (event: A2AProtocolTaskStatusUpdateEvent) => void,
+  ) {
     const { method, params } = A2AJsonRpcRequestSchema.parse(request);
     const agent = await this.getAgentById(agentId);
     const actor = await this.resolveActor(agentId, token);
-    const { func, schema } = this.getRouteForMethod(method);
+    const { func, schema } = this.getRouteForMethod(method, onEvent);
 
     // Throws ZodError if request schema is invalid
     schema.parse(params);
@@ -311,7 +453,10 @@ class A2AV2Router {
     return await func({ actor, agentId: agent.id, request: params });
   }
 
-  private getRouteForMethod(method: string) {
+  private getRouteForMethod(
+    method: string,
+    onEvent?: (event: A2AProtocolTaskStatusUpdateEvent) => void,
+  ) {
     const mapper: Record<string, { func: A2ARouteFunc; schema: z.ZodSchema }> =
       {
         SendMessage: {
@@ -319,6 +464,7 @@ class A2AV2Router {
             this.manager.sendMessage({
               ...params,
               request: params.request as A2AProtocolSendMessageRequest,
+              onEvent,
             }),
           schema: A2AProtocolSendMessageRequestSchema,
         },
@@ -349,7 +495,7 @@ class A2AV2Router {
     return agent;
   }
 
-  private async resolveActor(
+  public async resolveActor(
     agentId: string,
     token: string,
   ): Promise<A2AActor> {

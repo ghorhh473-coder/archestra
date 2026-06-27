@@ -5,6 +5,7 @@ import {
   type TextPart,
   type TextUIPart,
   type UIMessage,
+  type UIMessageChunk,
 } from "ai";
 import logger from "@/logging";
 import {
@@ -38,6 +39,7 @@ import {
   type A2AProtocolSendMessageResponse,
   type A2AProtocolTask,
   A2AProtocolTaskState,
+  type A2AProtocolTaskStatusUpdateEvent,
 } from "./a2a-protocol";
 
 interface A2AManagerConfig {
@@ -93,9 +95,11 @@ export class A2AManager {
       chatOpsBindingId?: string;
       chatOpsThreadId?: string;
     };
+    onEvent?: (event: A2AProtocolTaskStatusUpdateEvent) => void;
+    onUiMessageChunk?: (chunk: UIMessageChunk) => void;
   }): Promise<A2AProtocolSendMessageResponse> {
     try {
-      const { actor, agentId, request, systemParams } = params;
+      const { actor, agentId, request, systemParams, onEvent, onUiMessageChunk } = params;
 
       const a2aUser =
         actor.kind === "user" && actor.id !== "system"
@@ -219,6 +223,25 @@ export class A2AManager {
         requestMessages.push({ role: "user", content: messageParts });
       }
 
+      const callbackUrl = request.configuration?.callbackUrl;
+      const combinedOnEvent = (event: A2AProtocolTaskStatusUpdateEvent) => {
+        onEvent?.(event);
+        if (callbackUrl) {
+          globalThis.fetch(callbackUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(event),
+          }).catch((err) => {
+            logger.warn(
+              { callbackUrl, error: err instanceof Error ? err.message : String(err) },
+              "Failed to push A2A TaskStatusUpdateEvent to callbackUrl (non-fatal)",
+            );
+          });
+        }
+      };
+
       const sessionId = systemParams?.sessionId ?? context?.id;
       const result = await startActiveChatSpan({
         agentName: agent.name,
@@ -250,6 +273,8 @@ export class A2AManager {
             originalUiMessages: contextUiMessages,
             chatOpsBindingId: systemParams?.chatOpsBindingId,
             chatOpsThreadId: systemParams?.chatOpsThreadId,
+            onEvent: combinedOnEvent,
+            onUiMessageChunk,
           });
         },
       });

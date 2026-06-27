@@ -98,6 +98,16 @@ const A2AProtocolTaskStatusSchema = z.object({
   timestamp: z.number().optional(),
 });
 
+export const A2AProtocolTaskStatusUpdateEventSchema = z.object({
+  taskId: z.string(),
+  status: A2AProtocolTaskStatusSchema,
+  final: z.boolean(),
+  metadata: z.any().optional(),
+});
+export type A2AProtocolTaskStatusUpdateEvent = z.infer<
+  typeof A2AProtocolTaskStatusUpdateEventSchema
+>;
+
 export const A2AProtocolTaskSchema = z.object({
   id: z.string(),
   contextId: z.string().optional(),
@@ -119,7 +129,13 @@ export type A2AProtocolGetTaskRequest = z.infer<
 
 // --- A2A Send Message ---
 
-const A2AProtocolSendMessageConfigurationSchema = z.object({});
+export const A2AProtocolSendMessageConfigurationSchema = z.object({
+  callbackUrl: z.string().url().optional(),
+  streaming: z.boolean().optional(),
+});
+export type A2AProtocolSendMessageConfiguration = z.infer<
+  typeof A2AProtocolSendMessageConfigurationSchema
+>;
 
 export const A2AProtocolSendMessageRequestSchema = z.object({
   tenant: z.string().optional(),
