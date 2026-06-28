@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  Folder,
+  FolderPlus,
   MoreHorizontal,
   Pencil,
   Pin,
@@ -12,6 +14,8 @@ import {
 import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ChatListSkeleton } from "@/app/_parts/chat-list-skeleton";
+import { CreateProjectFromChatDialog } from "@/app/_parts/create-project-from-chat-dialog";
+import { isScheduledRunConversation } from "@/app/_parts/scheduled-run-sidebar.utils";
 import { AgentIcon } from "@/components/agent-icon";
 import { DeleteConfirmDialog } from "@/components/delete-confirm-dialog";
 import { TruncatedText } from "@/components/truncated-text";
@@ -56,7 +60,11 @@ import {
   getConversationShareTooltip,
 } from "@/lib/chat/chat-utils";
 import { useGlobalChat } from "@/lib/chat/global-chat.context";
+import { buildPinnedSidebarItems } from "@/lib/chat/pinned-sidebar-items";
+import { useFeature } from "@/lib/config/config.query";
 import type { Once } from "@/lib/hooks/use-once";
+import { canCreateProjectFromChat } from "@/lib/projects/can-create-project-from-chat";
+import { usePinProject, useProjects } from "@/lib/projects/projects.query";
 import { cn } from "@/lib/utils";
 
 const DEFAULT_SIDEBAR_CHAT_SLOTS = 3;
@@ -126,6 +134,13 @@ export function ChatSidebarSection({
   const { data: canDeleteConversation } = useHasPermissions({
     chat: ["delete"],
   });
+  const { data: canCreateProject } = useHasPermissions({
+    project: ["create"],
+  });
+  const [createProjectConv, setCreateProjectConv] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
 
   // Conversations whose title should play the typing animation (shared via chat context)
   const { animatingTitleIds, markTitleAnimating } = useGlobalChat();
@@ -136,8 +151,20 @@ export function ChatSidebarSection({
     ? (pathname.split("/").at(-1) ?? null)
     : null;
 
-  const pinnedChats = conversations.filter((c) => c.pinnedAt);
-  const recentUnpinnedChats = conversations.filter((c) => !c.pinnedAt);
+  const recentUnpinnedChats = conversations.filter(
+    (c) => !c.pinnedAt && !isScheduledRunConversation(c),
+  );
+
+  const projectsEnabled = useFeature("projectsEnabled") === true;
+  const { data: projectsData } = useProjects({ enabled: projectsEnabled });
+  const pinProjectMutation = usePinProject();
+  const pinnedProjects = projectsEnabled
+    ? (projectsData ?? []).filter((p) => p.pinnedAt)
+    : [];
+  const pinnedItems = buildPinnedSidebarItems({
+    chats: conversations.filter((c) => !isScheduledRunConversation(c)),
+    projects: pinnedProjects,
+  });
 
   useEffect(() => {
     if (editingId && inputRef.current) {
@@ -215,6 +242,17 @@ export function ChatSidebarSection({
     pinConversationMutation.mutate({ id, pinned: !isPinned });
   };
 
+  const handleSelectProject = (id: string) => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    router.push(`/projects/${id}`);
+  };
+
+  const handleUnpinProject = (id: string) => {
+    pinProjectMutation.mutate({ id, pinned: false });
+  };
+
   const openConversationSearch = () => {
     window.dispatchEvent(
       new CustomEvent("open-conversation-search", {
@@ -232,6 +270,11 @@ export function ChatSidebarSection({
       generateTitleMutation.variables?.id === conv.id;
     const isMenuOpen = openMenuId === conv.id;
     const isPinned = !!conv.pinnedAt;
+    const showCreateProject = canCreateProjectFromChat({
+      projectsEnabled,
+      hasCreatePermission: canCreateProject === true,
+      conversation: conv,
+    });
 
     return (
       <SidebarMenuSubItem key={conv.id}>
@@ -332,15 +375,21 @@ export function ChatSidebarSection({
               </span>
               {conv.projectName && (
                 <span className="ml-1 flex max-w-24 shrink-0 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                  <AgentIcon
-                    icon={conv.projectIcon}
-                    fallbackType="project"
-                    size={10}
-                  />
+                  {conv.projectIcon ? (
+                    <AgentIcon
+                      icon={conv.projectIcon}
+                      fallbackType="project"
+                      size={10}
+                    />
+                  ) : (
+                    <Folder className="h-2.5 w-2.5 shrink-0" />
+                  )}
                   <span className="truncate">{conv.projectName}</span>
                 </span>
               )}
-              {(canUpdateConversation || canDeleteConversation) && (
+              {(canUpdateConversation ||
+                canDeleteConversation ||
+                showCreateProject) && (
                 <DropdownMenu
                   open={isMenuOpen}
                   onOpenChange={(open) => setOpenMenuId(open ? conv.id : null)}
@@ -397,6 +446,21 @@ export function ChatSidebarSection({
                         </DropdownMenuItem>
                       </>
                     )}
+                    {showCreateProject && (
+                      <DropdownMenuItem
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenMenuId(null);
+                          setCreateProjectConv({
+                            id: conv.id,
+                            title: displayTitle,
+                          });
+                        }}
+                      >
+                        <FolderPlus className="h-4 w-4 mr-2" />
+                        Create project
+                      </DropdownMenuItem>
+                    )}
                     {canDeleteConversation && (
                       <DropdownMenuItem
                         onClick={(e) => {
@@ -419,7 +483,69 @@ export function ChatSidebarSection({
     );
   };
 
-  if (!isLoading && conversations.length === 0) {
+  const renderProjectItem = (project: (typeof pinnedProjects)[number]) => {
+    const isActive = pathname === `/projects/${project.id}`;
+    const menuKey = `project:${project.id}`;
+    const isMenuOpen = openMenuId === menuKey;
+
+    return (
+      <SidebarMenuSubItem key={menuKey}>
+        <div className="flex items-center justify-between w-full gap-1">
+          <SidebarMenuButton
+            onClick={() => handleSelectProject(project.id)}
+            isActive={isActive}
+            className="cursor-pointer flex-1 justify-between"
+          >
+            <span className="flex items-center gap-2 min-w-0 flex-1">
+              {project.icon ? (
+                <AgentIcon
+                  icon={project.icon}
+                  fallbackType="project"
+                  size={14}
+                />
+              ) : (
+                <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <TruncatedText
+                message={project.name}
+                maxLength={MAX_TITLE_LENGTH}
+                className="truncate"
+                showTooltip={false}
+              />
+            </span>
+            <DropdownMenu
+              open={isMenuOpen}
+              onOpenChange={(open) => setOpenMenuId(open ? menuKey : null)}
+            >
+              <DropdownMenuTrigger asChild>
+                <MoreHorizontal
+                  className={cn(
+                    "h-4 w-4 p-0 shrink-0 transition-opacity",
+                    isMenuOpen
+                      ? "opacity-100"
+                      : "opacity-0 group-hover/menu-sub-item:opacity-100",
+                  )}
+                />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" side="right">
+                <DropdownMenuItem
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleUnpinProject(project.id);
+                  }}
+                >
+                  <PinOff className="h-4 w-4 mr-2" />
+                  Unpin
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </SidebarMenuButton>
+        </div>
+      </SidebarMenuSubItem>
+    );
+  };
+
+  if (!isLoading && conversations.length === 0 && pinnedProjects.length === 0) {
     return null;
   }
 
@@ -432,14 +558,18 @@ export function ChatSidebarSection({
         <ChatListSkeleton subClass={subClass} />
       ) : (
         <ChatListFadeIn fadeIn={fadeIn}>
-          {pinnedChats.length > 0 && (
+          {pinnedItems.length > 0 && (
             <SidebarGroup className="pt-0">
               <SidebarGroupLabel>Pinned</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
                   <SidebarMenuItem>
                     <SidebarMenuSub className={subClass}>
-                      {pinnedChats.map((conv) => renderConversationItem(conv))}
+                      {pinnedItems.map((it) =>
+                        it.type === "chat"
+                          ? renderConversationItem(it.item)
+                          : renderProjectItem(it.item),
+                      )}
                     </SidebarMenuSub>
                   </SidebarMenuItem>
                 </SidebarMenu>
@@ -491,6 +621,13 @@ export function ChatSidebarSection({
         }}
         confirmLabel="Delete"
         pendingLabel="Deleting..."
+      />
+
+      <CreateProjectFromChatDialog
+        conversationId={createProjectConv?.id ?? null}
+        defaultName={createProjectConv?.title ?? ""}
+        open={createProjectConv !== null}
+        onOpenChange={(open) => !open && setCreateProjectConv(null)}
       />
     </>
   );

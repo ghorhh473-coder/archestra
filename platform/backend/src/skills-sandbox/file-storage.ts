@@ -2,67 +2,31 @@ import { randomUUID } from "node:crypto";
 import { type Dirent, constants as fsConstants } from "node:fs";
 import * as fs from "node:fs/promises";
 import path from "node:path";
+import type { S3Client } from "@aws-sdk/client-s3";
 import config from "@/config";
 import type { StoredBlobRow } from "@/types";
 import { resolveWithinRoot, safeSegment, UnsafePathError } from "./file-path";
+import {
+  type EnumerableObjectStore,
+  FileBytesMissingError,
+  FilePathConflictError,
+  type OwnerScope,
+  type StoredObject,
+  scopeFolder,
+} from "./object-store";
+import { buildS3Client, S3ObjectStore } from "./s3-storage";
+
+export { FileBytesMissingError } from "./object-store";
 
 /**
- * Provider-agnostic byte storage. The seam is `ObjectStore` — a backend that
- * holds bytes addressed by an opaque `key` (filesystem today; S3/Drive/… later).
- * Postgres `bytea` is NOT an `ObjectStore`: it stores bytes inline in the row, so
- * it has no external key namespace and nothing can be dropped in out of band. The
- * row helpers below (`readRowBytes`/`deleteRowBytes`) dispatch per row between the
- * inline (`db`) case and the row's external store.
+ * Filesystem byte backend + provider dispatch. The provider-agnostic seam
+ * (`ObjectStore`/`EnumerableObjectStore`) lives in `./object-store`; this module
+ * implements it for a mounted filesystem (`FilesystemObjectStore`), selects the
+ * active backend (`objectStoreFor`/`getObjectStore`), and dispatches a row's bytes
+ * per `storageProvider` via `readRowBytes`/`deleteRowBytes`. Postgres `bytea` is
+ * NOT an `ObjectStore`: bytes live inline in the row, so it has no external key
+ * namespace and nothing can be dropped in out of band.
  */
-
-/** The owner namespace an object belongs to; `label` is its human folder/prefix. */
-export type OwnerScope =
-  | { kind: "user"; userId: string; label: string }
-  | { kind: "project"; projectId: string; label: string };
-
-/** An object a backend holds — may or may not have a `files` row behind it. */
-type StoredObject = {
-  key: string;
-  name: string;
-  size: number;
-  modifiedAt: Date;
-};
-
-/** A backend that stores bytes under opaque, provider-owned keys. */
-interface ObjectStore {
-  /**
-   * Store bytes and return the key they're addressed by. Fails with
-   * {@link FilePathConflictError} if an object named `name` already exists in
-   * `scope` (exclusive create — never overwrites).
-   */
-  write(params: {
-    scope: OwnerScope;
-    name: string;
-    data: Buffer;
-    /** Replace bytes if the object already exists (edit) instead of failing. */
-    overwrite?: boolean;
-  }): Promise<{ key: string }>;
-  read(key: string): Promise<Buffer>;
-  remove(key: string): Promise<void>;
-}
-
-/**
- * A store whose namespace can change out of band, so objects placed by hand
- * (no `files` row) can be surfaced.
- */
-interface EnumerableObjectStore extends ObjectStore {
-  enumerate(scope: OwnerScope): Promise<StoredObject[]>;
-}
-
-export class FileBytesMissingError extends Error {}
-
-/** An object with this name already exists in the scope (exclusive create lost). */
-export class FilePathConflictError extends Error {
-  constructor(name: string) {
-    super(`an object named "${name}" already exists`);
-    this.name = "FilePathConflictError";
-  }
-}
 
 /**
  * Filename a stored file is addressed by: the caller-provided original name when
@@ -108,8 +72,8 @@ export async function deleteRowBytes(blob: {
 // === internal ===
 
 /**
- * Bytes on a mounted filesystem, laid out `<root>/<label>/<name>` (the label is
- * the owner's email or project name). Writes are atomic + exclusive (temp file +
+ * Bytes on a mounted filesystem, laid out `<root>/<folder>/<name>` (the folder is
+ * the owner's email — optionally `/conversationId` — or project slug). Writes are atomic + exclusive (temp file +
  * `link`), reads refuse symlinks (`O_NOFOLLOW`), and every path is confined to
  * the root.
  *
@@ -125,10 +89,10 @@ export class FilesystemObjectStore implements EnumerableObjectStore {
     overwrite?: boolean;
   }): Promise<{ key: string }> {
     const root = this.getRoot();
-    const folder = safeSegment(params.scope.label);
+    const folder = scopeFolder(params.scope);
     const filename = safeSegment(params.name);
     const key = `${folder}/${filename}`;
-    const finalPath = resolveWithinRoot(root, folder, filename);
+    const finalPath = resolveWithinRoot(root, ...folder.split("/"), filename);
     const dir = path.dirname(finalPath);
     await fs.mkdir(dir, { recursive: true });
     // the owner folder itself must not be a symlink escaping the root.
@@ -206,11 +170,11 @@ export class FilesystemObjectStore implements EnumerableObjectStore {
     const root = this.getRoot();
     let folder: string;
     try {
-      folder = safeSegment(scope.label);
+      folder = scopeFolder(scope);
     } catch {
       return [];
     }
-    const dir = resolveWithinRoot(root, folder);
+    const dir = resolveWithinRoot(root, ...folder.split("/"));
     try {
       await this.assertRealWithinRoot(root, dir);
     } catch {
@@ -275,9 +239,33 @@ const filesystemStore = new FilesystemObjectStore(
   () => config.fileStorage.filesystemRoot,
 );
 
+// The real S3 client is built once from config (memoized); a test may inject a
+// fake via __setS3ClientForTests. Both are read lazily through thunks so the
+// singleton tracks config mutations in tests.
+let cachedS3Client: S3Client | null = null;
+let s3ClientOverride: S3Client | null = null;
+
+/** @public — test seam: inject a fake S3 client (or null to reset) for the store. */
+export function __setS3ClientForTests(client: S3Client | null): void {
+  s3ClientOverride = client;
+  cachedS3Client = null;
+}
+
+const s3Store = new S3ObjectStore({
+  getClient: () => {
+    if (s3ClientOverride) return s3ClientOverride;
+    if (!cachedS3Client) cachedS3Client = buildS3Client(config.fileStorage.s3);
+    return cachedS3Client;
+  },
+  getBucket: () => config.fileStorage.s3.bucket,
+  getKeyPrefix: () => config.fileStorage.s3.keyPrefix,
+});
+
 /** The store a given provider's rows live in; null = inline Postgres (`db`). */
 function objectStoreFor(
   provider: string | null | undefined,
 ): EnumerableObjectStore | null {
-  return provider === "filesystem" ? filesystemStore : null;
+  if (provider === "filesystem") return filesystemStore;
+  if (provider === "s3") return s3Store;
+  return null;
 }

@@ -1,28 +1,24 @@
-"""Verify the submitted top customer against a recompute from the same SQLite fixture.
+"""Verify the submitted top customer by recomputing from the canonical rows.
 
-Reads BENCH_RESULT (submitted JSON) and BENCH_FIXTURES/inputs/orders.sqlite (the same binary DB
-staged to the agent). Recomputing the aggregate from the fixture avoids hard-coding the expected
-value.
+The staged orders.sqlite is deliberately corrupted (malformed sqlite_master schema) so the agent
+has to recover it before it can answer. Ground truth therefore comes from expected/rows.json -- the
+canonical (region, customer, amount) rows -- recomputed here with the same aggregate the task asks
+for, never from the broken binary.
 """
 
-import json
-import os
 import sqlite3
-from pathlib import Path
 
-
-def _result() -> dict:
-    path = os.environ.get("BENCH_RESULT")
-    assert path, "BENCH_RESULT is not set"
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+from bench_verifier import read_fixture_json, result
 
 
 def _top_customer() -> str:
-    base = os.environ.get("BENCH_FIXTURES")
-    assert base, "BENCH_FIXTURES is not set"
-    db_path = Path(base, "inputs", "orders.sqlite")
-    conn = sqlite3.connect(db_path)
+    rows = read_fixture_json("expected", "rows.json")
+    conn = sqlite3.connect(":memory:")
     try:
+        conn.execute("CREATE TABLE orders (region TEXT, customer TEXT, amount INTEGER)")
+        conn.executemany(
+            "INSERT INTO orders (region, customer, amount) VALUES (?, ?, ?)", rows
+        )
         # Highest total amount wins; ties broken alphabetically by customer name.
         row = conn.execute(
             "SELECT customer FROM orders "
@@ -32,11 +28,11 @@ def _top_customer() -> str:
         ).fetchone()
     finally:
         conn.close()
-    assert row is not None, "orders table is empty"
+    assert row is not None, "rows.json is empty"
     return row[0]
 
 
 def test_top_customer_matches() -> None:
     expected = _top_customer()
-    submitted = _result()["top_customer"]
+    submitted = result()["top_customer"]
     assert submitted == expected, f"submitted top_customer {submitted!r} != expected {expected!r}"

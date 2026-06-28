@@ -1,6 +1,7 @@
 import {
   isAlwaysExposedArchestraToolShortName,
   parseFullToolName,
+  TOOL_RUN_COMMAND_SHORT_NAME,
   TOOL_RUN_TOOL_SHORT_NAME,
   TOOL_SEARCH_TOOLS_SHORT_NAME,
 } from "@archestra/shared";
@@ -11,8 +12,10 @@ import logger from "@/logging";
 import {
   ConversationEnabledToolModel,
   InternalMcpCatalogModel,
+  McpServerModel,
   ToolModel,
 } from "@/models";
+import { isSkillSandboxAvailableForAgent } from "@/skills/skill-sandbox-availability";
 import { archestraMcpBranding } from "./branding";
 import { isToolEnabledForConversation } from "./conversation-tool-filter";
 import { getAgentTools } from "./delegation";
@@ -33,7 +36,7 @@ const SearchToolsArgsSchema = z
       .min(1)
       .max(200)
       .describe(
-        "Keywords describing the capability you need, e.g. 'send slack message' or 'search repositories'. Results are keyword-ranked across tool names, descriptions, and argument names/descriptions, so pass several relevant words and include the server name (e.g. 'github') to narrow results.",
+        "Keywords for the capability you need — combine the action (verb + object) with the server/product name when you know it, e.g. 'github search repositories' or 'slack send message'. Avoid querying with a bare product/server name on its own. Results are keyword-ranked across tool names, descriptions, and argument names/descriptions. If nothing fits, reformulate with different keywords and search again rather than settling for a poor match.",
       ),
     limit: z
       .number()
@@ -103,7 +106,7 @@ const SearchToolsOutputSchema = z.object({
     .string()
     .nullable()
     .describe(
-      "Actionable guidance when results were truncated, empty, or when some query terms matched no tool text.",
+      "Actionable guidance when results were truncated or empty (an empty result also names which query terms matched no tool text).",
     ),
   tools: z.array(
     z.object({
@@ -122,6 +125,18 @@ const SearchToolsOutputSchema = z.object({
         .nullable()
         .describe(
           "MCP server prefix for third-party MCP tools when available.",
+        ),
+      available: z
+        .boolean()
+        .describe(
+          "False when the tool's MCP connection is not installed; it stays " +
+            "discoverable but cannot run until reconnected.",
+        ),
+      unavailableReason: z
+        .string()
+        .nullable()
+        .describe(
+          "Compact reason and recovery action when available is false; null otherwise.",
         ),
       params: z
         .string()
@@ -148,6 +163,7 @@ type SearchCandidate = {
   source: "archestra" | "mcp" | "agent_delegation";
   server: string | null;
   catalogName: string | null;
+  available: boolean;
   inputParameters: InputParameterSummary[];
   searchText: {
     name: string;
@@ -198,14 +214,33 @@ const registry = defineArchestraTools([
       }
 
       const matchCount = matches.length;
-      const tools = matches.slice(0, args.limit).map(toSearchResult);
+      // Available tools rank ahead of unavailable ones regardless of match
+      // strength, so an unavailable tool never displaces a usable match and is
+      // dropped first on truncation. Stable partition keeps relevance order
+      // within each group.
+      const ranked = [
+        ...matches.filter((candidate) => candidate.available),
+        ...matches.filter((candidate) => !candidate.available),
+      ];
+      const tools = ranked.slice(0, args.limit).map(toSearchResult);
       const truncated = matchCount > tools.length;
+      // Only relevant to the zero-match hint, so resolve it lazily to avoid an
+      // extra permission/assignment lookup on every successful search.
+      const sandboxAvailable =
+        matchCount === 0 && context.organizationId != null
+          ? await isSkillSandboxAvailableForAgent({
+              userId: context.userId,
+              organizationId: context.organizationId,
+              agentId: context.agentId,
+            })
+          : false;
       const hint = buildSearchHint({
         matchCount,
         truncated,
         limit: args.limit,
         searchableTools,
         unmatchedTerms,
+        sandboxAvailable,
       });
 
       const structured = {
@@ -262,6 +297,7 @@ export const __test = {
       source: "mcp",
       server: null,
       catalogName: null,
+      available: true,
       inputParameters: [],
       searchText: buildSearchText({
         name: input.toolName,
@@ -320,6 +356,7 @@ async function getSearchableTools(params: {
       : [];
 
   const catalogNamesById = await getCatalogNamesById(filteredTools);
+  const catalogsWithInstalls = await getCatalogIdsWithInstalls(filteredTools);
   const candidates = new Map<string, SearchCandidate>();
   // First occurrence wins on duplicate names: assigned tools come before the
   // discoverable ones, and the discoverable set is ordered newest-first — the
@@ -337,6 +374,7 @@ async function getSearchableTools(params: {
           tool.catalogId != null
             ? (catalogNamesById.get(tool.catalogId) ?? null)
             : null,
+        catalogsWithInstalls,
       }),
     );
   }
@@ -366,11 +404,19 @@ function toAssignedToolCandidate(params: {
     catalogId: string | null;
   };
   catalogName: string | null;
+  catalogsWithInstalls: Set<string>;
 }): SearchCandidate {
-  const { catalogName, tool } = params;
+  const { catalogsWithInstalls, catalogName, tool } = params;
   const source = archestraMcpBranding.isToolName(tool.name)
     ? "archestra"
     : "mcp";
+  // Built-in Archestra tools and proxy-sniffed tools (no catalog) are always
+  // available; a third-party tool is available only while its catalog still
+  // has an installed connection.
+  const available =
+    source === "archestra" || tool.catalogId == null
+      ? true
+      : catalogsWithInstalls.has(tool.catalogId);
   const parsedToolName =
     source === "mcp" ? parseFullToolName(tool.name) : { serverName: null };
   const parameters = tool.parameters ?? {};
@@ -385,6 +431,7 @@ function toAssignedToolCandidate(params: {
     source,
     server: parsedToolName.serverName ?? null,
     catalogName: source === "mcp" ? catalogName : null,
+    available,
     inputParameters,
     searchText: buildSearchText({
       name: tool.name,
@@ -407,6 +454,7 @@ function toDelegationToolCandidate(tool: Tool): SearchCandidate {
     source: "agent_delegation",
     server: null,
     catalogName: null,
+    available: true,
     inputParameters,
     searchText: buildSearchText({
       name: tool.name,
@@ -430,6 +478,26 @@ async function getCatalogNamesById(
   const catalogs = await InternalMcpCatalogModel.getByIds(catalogIds);
   return new Map(
     Array.from(catalogs.values()).map((catalog) => [catalog.id, catalog.name]),
+  );
+}
+
+// A tool is runnable only while its catalog still has an installed connection;
+// this resolves, in one query, which of the given tools' catalogs do.
+async function getCatalogIdsWithInstalls(
+  tools: Array<{ catalogId: string | null }>,
+): Promise<Set<string>> {
+  const catalogIds = Array.from(
+    new Set(
+      tools
+        .map((tool) => tool.catalogId)
+        .filter((catalogId): catalogId is string => catalogId != null),
+    ),
+  );
+  const installs = await McpServerModel.findByCatalogIds(catalogIds);
+  return new Set(
+    installs
+      .map((server) => server.catalogId)
+      .filter((catalogId): catalogId is string => catalogId != null),
   );
 }
 
@@ -636,6 +704,10 @@ function toSearchResult(candidate: SearchCandidate) {
     description: candidate.description,
     source: candidate.source,
     server: candidate.server,
+    available: candidate.available,
+    unavailableReason: candidate.available
+      ? null
+      : "MCP connection not installed — reconnect the server to use this tool.",
     params: formatParamsSignature(candidate.inputParameters),
   };
 }
@@ -768,27 +840,40 @@ function regexMatchRank(candidate: SearchCandidate, regex: RegExp): number {
 }
 
 // Actionable next-step guidance (Anthropic recovery-error practice). Null when
-// results are complete, non-empty, and every query term hit some tool text.
-// Clauses compose: a vocabulary-mismatch note can ride alongside the empty- or
-// truncated-result note so the model learns both what happened and which terms
-// to drop or replace.
+// results came back and were not truncated. On a zero-result search the
+// vocabulary-mismatch note rides alongside the empty-result note so the model
+// learns both what happened and which terms matched nothing; a successful search
+// never carries it, since flagging extra terms on a hit only invites a re-search.
 function buildSearchHint(params: {
   matchCount: number;
   truncated: boolean;
   limit: number;
   searchableTools: SearchCandidate[];
   unmatchedTerms: string[];
+  sandboxAvailable: boolean;
 }): string | null {
-  const { limit, matchCount, searchableTools, truncated, unmatchedTerms } =
-    params;
+  const {
+    limit,
+    matchCount,
+    sandboxAvailable,
+    searchableTools,
+    truncated,
+    unmatchedTerms,
+  } = params;
   const parts: string[] = [];
 
   if (matchCount === 0) {
     const servers = availableServerNames(searchableTools);
     const serverHint =
       servers.length > 0 ? ` Available servers: ${servers.join(", ")}.` : "";
+    const runCommand = archestraMcpBranding.getToolName(
+      TOOL_RUN_COMMAND_SHORT_NAME,
+    );
+    const sandboxHint = sandboxAvailable
+      ? ` If no tool fits, you can fall back to \`${runCommand}\` to do the work with command line tools.`
+      : "";
     parts.push(
-      `No tools matched. Try broader or different keywords, or switch mode.${serverHint}`,
+      `No tools matched. Try broader or different keywords, or switch mode.${serverHint}${sandboxHint}`,
     );
   } else if (truncated) {
     parts.push(
@@ -796,7 +881,11 @@ function buildSearchHint(params: {
     );
   }
 
-  if (unmatchedTerms.length > 0) {
+  // Only surface unmatched query terms when the search found nothing. On a successful search
+  // (matchCount > 0) the model has what it needs; flagging the extra terms it threw in reads as
+  // "your query was partly wrong" and provokes a wasted re-search, so it rides only the zero-result
+  // note where it explains why nothing matched.
+  if (matchCount === 0 && unmatchedTerms.length > 0) {
     parts.push(
       `No tool text matches these query terms: ${unmatchedTerms.join(", ")}.`,
     );

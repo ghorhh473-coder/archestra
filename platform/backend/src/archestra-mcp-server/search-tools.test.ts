@@ -7,6 +7,7 @@ import {
   TOOL_DOWNLOAD_FILE_FULL_NAME,
   TOOL_LIST_SKILLS_FULL_NAME,
   TOOL_LOAD_SKILL_FULL_NAME,
+  TOOL_READ_FILE_FULL_NAME,
   TOOL_RUN_COMMAND_FULL_NAME,
   TOOL_RUN_TOOL_FULL_NAME,
   TOOL_SEARCH_TOOLS_FULL_NAME,
@@ -56,6 +57,8 @@ type SearchToolsStructuredContent = {
     description: string | null;
     source: "archestra" | "mcp" | "agent_delegation";
     server: string | null;
+    available: boolean;
+    unavailableReason: string | null;
     params: string;
   }>;
 };
@@ -64,6 +67,7 @@ describe("search_tools", () => {
   test("returns ranked matching tools with compact parameter summaries", async ({
     makeAgent,
     makeInternalMcpCatalog,
+    makeMcpServer,
     makeMember,
     makeOrganization,
     makeTool,
@@ -104,6 +108,7 @@ describe("search_tools", () => {
       },
     });
     await makeAgentTool(agent.id, githubTool.id);
+    await makeMcpServer({ catalogId: catalog.id, scope: "org" });
 
     const context: ArchestraContext = {
       agent: { id: agent.id, name: agent.name },
@@ -128,6 +133,8 @@ describe("search_tools", () => {
       description: "Search repositories by topic, language, or owner.",
       source: "mcp",
       server: "github",
+      available: true,
+      unavailableReason: null,
       params:
         "query!:string — Repository search query string.; language?:string — Optional language filter.",
     });
@@ -148,9 +155,93 @@ describe("search_tools", () => {
     expect(returnedToolNames).not.toContain(TOOL_RUN_TOOL_FULL_NAME);
   });
 
+  test("marks tools without an installed connection as unavailable and ranks them last", async ({
+    makeAgent,
+    makeInternalMcpCatalog,
+    makeMcpServer,
+    makeMember,
+    makeOrganization,
+    makeTool,
+    makeAgentTool,
+    makeUser,
+  }) => {
+    const org = await makeOrganization();
+    const user = await makeUser();
+    await makeMember(user.id, org.id, { role: "admin" });
+    const agent = await makeAgent({
+      name: "Availability Agent",
+      organizationId: org.id,
+    });
+
+    const installedCatalog = await makeInternalMcpCatalog({
+      organizationId: org.id,
+      name: "Installed MCP",
+    });
+    const installedTool = await makeTool({
+      name: "installed__do_thing",
+      description: "widget action available now",
+      catalogId: installedCatalog.id,
+    });
+    await makeAgentTool(agent.id, installedTool.id);
+    await makeMcpServer({ catalogId: installedCatalog.id, scope: "org" });
+
+    // Same catalog shape but no installed connection -> retained, unavailable.
+    const removedCatalog = await makeInternalMcpCatalog({
+      organizationId: org.id,
+      name: "Removed MCP",
+    });
+    const removedTool = await makeTool({
+      name: "removed__do_thing",
+      description: "widget action pending reconnect",
+      catalogId: removedCatalog.id,
+    });
+    await makeAgentTool(agent.id, removedTool.id);
+
+    const context: ArchestraContext = {
+      agent: { id: agent.id, name: agent.name },
+      agentId: agent.id,
+      organizationId: org.id,
+      userId: user.id,
+    };
+
+    const result = await executeArchestraTool(
+      TOOL_SEARCH_TOOLS_FULL_NAME,
+      { query: "widget action", limit: 5 },
+      context,
+    );
+    expect(result.isError).toBe(false);
+    const content = result.structuredContent as SearchToolsStructuredContent;
+    const byName = new Map(content.tools.map((tool) => [tool.toolName, tool]));
+
+    expect(byName.get("installed__do_thing")).toMatchObject({
+      available: true,
+      unavailableReason: null,
+    });
+    expect(byName.get("removed__do_thing")?.available).toBe(false);
+    expect(byName.get("removed__do_thing")?.unavailableReason).toBeTruthy();
+
+    // Available ranks ahead of unavailable.
+    const names = content.tools.map((tool) => tool.toolName);
+    expect(names.indexOf("installed__do_thing")).toBeLessThan(
+      names.indexOf("removed__do_thing"),
+    );
+
+    // On truncation, the unavailable tool is dropped first.
+    const truncated = await executeArchestraTool(
+      TOOL_SEARCH_TOOLS_FULL_NAME,
+      { query: "widget action", limit: 1 },
+      context,
+    );
+    const truncatedContent =
+      truncated.structuredContent as SearchToolsStructuredContent;
+    expect(truncatedContent.tools).toHaveLength(1);
+    expect(truncatedContent.tools[0].toolName).toBe("installed__do_thing");
+  });
+
   test("includes unassigned tools from catalogs the user can access when the agent allows dynamic access", async ({
     makeAgent,
     makeInternalMcpCatalog,
+    makeMcpServer,
     makeMember,
     makeOrganization,
     makeTool,
@@ -175,6 +266,7 @@ describe("search_tools", () => {
       description: "Search repositories by topic, language, or owner.",
       catalogId: catalog.id,
     });
+    await makeMcpServer({ catalogId: catalog.id, scope: "org" });
 
     const context: ArchestraContext = {
       agent: { id: agent.id, name: agent.name },
@@ -345,6 +437,51 @@ describe("search_tools", () => {
     });
   });
 
+  test("on zero matches, hints the sandbox fallback when the sandbox is usable", async ({
+    makeAgent,
+    makeMember,
+    makeOrganization,
+    makeUser,
+    seedAndAssignArchestraTools,
+  }) => {
+    const config = (await import("@/config")).default;
+    const originalSandboxEnabled = config.skillsSandbox.enabled;
+    (config.skillsSandbox as { enabled: boolean }).enabled = true;
+
+    try {
+      const org = await makeOrganization();
+      const user = await makeUser();
+      await makeMember(user.id, org.id, { role: "admin" });
+      const agent = await makeAgent({
+        name: "Sandbox Search Agent",
+        organizationId: org.id,
+      });
+      await seedAndAssignArchestraTools(agent.id);
+
+      const context: ArchestraContext = {
+        agent: { id: agent.id, name: agent.name },
+        agentId: agent.id,
+        organizationId: org.id,
+        userId: user.id,
+      };
+
+      const result = await executeArchestraTool(
+        TOOL_SEARCH_TOOLS_FULL_NAME,
+        { query: "zzqqxyzznomatch", limit: 10 },
+        context,
+      );
+
+      const structuredContent =
+        result.structuredContent as SearchToolsStructuredContent;
+      expect(structuredContent.matchCount).toBe(0);
+      expect(structuredContent.hint).toContain(TOOL_RUN_COMMAND_FULL_NAME);
+      expect(structuredContent.hint).toContain("fall back");
+    } finally {
+      (config.skillsSandbox as { enabled: boolean }).enabled =
+        originalSandboxEnabled;
+    }
+  });
+
   test("excludes always-exposed tools but keeps authoring tools searchable", async ({
     makeAgent,
     makeMember,
@@ -474,9 +611,57 @@ describe("search_tools", () => {
         expect(names).toContain(TOOL_RUN_COMMAND_FULL_NAME);
         expect(names).toContain(TOOL_UPLOAD_FILE_FULL_NAME);
         expect(names).toContain(TOOL_DOWNLOAD_FILE_FULL_NAME);
+        // Persistent-files tools surface too while the Projects feature is on.
+        expect(names).toContain(TOOL_READ_FILE_FULL_NAME);
       } finally {
         (config.skillsSandbox as { enabled: boolean }).enabled =
           originalSandboxEnabled;
+      }
+    });
+
+    test("drops persistent-files tools from discovery when the Projects feature is off, keeping sandbox-runtime tools", async ({
+      makeAgent,
+      makeMember,
+      makeOrganization,
+      makeUser,
+    }) => {
+      const config = (await import("@/config")).default;
+      const originalSandboxEnabled = config.skillsSandbox.enabled;
+      const originalProjectsEnabled = config.projects.enabled;
+      (config.skillsSandbox as { enabled: boolean }).enabled = true;
+      try {
+        const org = await makeOrganization();
+        const user = await makeUser();
+        await makeMember(user.id, org.id, { role: "admin" });
+        const agent = await makeAgent({
+          name: "Projects Discovery Agent",
+          organizationId: org.id,
+          accessAllTools: true,
+        });
+        // Seed with the Projects feature on so the persistent-files catalog rows
+        // exist, then turn it off: the rows persist but discovery must drop them.
+        (config.projects as { enabled: boolean }).enabled = true;
+        await ToolModel.seedArchestraTools(ARCHESTRA_MCP_CATALOG_ID);
+        (config.projects as { enabled: boolean }).enabled = false;
+
+        const names = await searchSandboxTools({
+          agent: { id: agent.id, name: agent.name },
+          agentId: agent.id,
+          organizationId: org.id,
+          userId: user.id,
+        });
+
+        // Runtime tools follow the runtime flag — still discoverable.
+        expect(names).toContain(TOOL_RUN_COMMAND_FULL_NAME);
+        expect(names).toContain(TOOL_UPLOAD_FILE_FULL_NAME);
+        expect(names).toContain(TOOL_DOWNLOAD_FILE_FULL_NAME);
+        // Persistent-files tools follow the Projects flag — gone.
+        expect(names).not.toContain(TOOL_READ_FILE_FULL_NAME);
+      } finally {
+        (config.skillsSandbox as { enabled: boolean }).enabled =
+          originalSandboxEnabled;
+        (config.projects as { enabled: boolean }).enabled =
+          originalProjectsEnabled;
       }
     });
 
@@ -1359,7 +1544,7 @@ describe("search_tools", () => {
       expect(structured.hint).toContain("GitHub MCP");
     });
 
-    test("a partial match reports the query terms that hit no tool text", async ({
+    test("a successful search does not flag extra query terms that hit no tool text", async ({
       makeAgent,
       makeAgentTool,
       makeInternalMcpCatalog,
@@ -1400,13 +1585,13 @@ describe("search_tools", () => {
       );
       const structured =
         result.structuredContent as SearchToolsStructuredContent;
+      // 'message' matches slack__post_message; 'gif' matches nothing. The search still
+      // succeeded, so the unmatched 'gif' is suppressed rather than surfaced as noise.
       expect(structured.matchCount).toBe(1);
-      expect(structured.hint).toContain("No tool text matches");
-      expect(structured.hint).toContain("gif");
-      expect(structured.hint).not.toContain("message");
+      expect(structured.hint).toBeNull();
     });
 
-    test("composes the truncation and unmatched-terms clauses", async ({
+    test("a truncated search omits the unmatched-terms clause", async ({
       makeAgent,
       makeAgentTool,
       makeInternalMcpCatalog,
@@ -1444,7 +1629,8 @@ describe("search_tools", () => {
         userId: user.id,
       };
       // 'search' matches all three (-> truncated at limit 1); 'zzznope' matches
-      // nothing -> both clauses must appear.
+      // nothing. The search succeeded, so only the truncation clause appears -- the
+      // unmatched 'zzznope' is suppressed.
       const result = await executeArchestraTool(
         TOOL_SEARCH_TOOLS_FULL_NAME,
         { query: "search zzznope", limit: 1 },
@@ -1454,8 +1640,8 @@ describe("search_tools", () => {
         result.structuredContent as SearchToolsStructuredContent;
       expect(structured.truncated).toBe(true);
       expect(structured.hint).toContain("top 1 of 3");
-      expect(structured.hint).toContain("No tool text matches");
-      expect(structured.hint).toContain("zzznope");
+      expect(structured.hint).not.toContain("No tool text matches");
+      expect(structured.hint).not.toContain("zzznope");
     });
 
     test("regex mode never appends an unmatched-terms clause", async ({

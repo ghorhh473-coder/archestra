@@ -76,6 +76,9 @@ pub struct EnvConfig {
     pub tasks: Vec<Task>,
     pub tools: Vec<String>,
     pub share_backend: bool,
+    /// When set, the harness starts its synthetic `acme_it` MCP and registers it to this env's agents.
+    /// Works in both modes: shared backends start one instance for all lanes, isolated lanes one each.
+    pub fixture_mcp: bool,
     pub platform: PlatformConfig,
 }
 
@@ -90,6 +93,10 @@ pub struct StagedFile {
 pub struct Stage {
     pub text: String,
     pub files: Vec<StagedFile>,
+    /// Drive this stage (and the ones after it) in a fresh conversation rather than continuing the
+    /// task's current one. Lets a task verify that files persist across conversations: a stage exports
+    /// a file, then a later `new_conversation` stage rediscovers it from persistent storage.
+    pub new_conversation: bool,
 }
 
 #[derive(Debug, Clone)]

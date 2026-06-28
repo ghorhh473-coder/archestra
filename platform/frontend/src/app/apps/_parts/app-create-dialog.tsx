@@ -4,6 +4,7 @@ import type { ResourceVisibilityScope } from "@archestra/shared";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
+import { EnvironmentSelector } from "@/components/environment-selector";
 import { StandardFormDialog } from "@/components/standard-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useCreateApp } from "@/lib/app.query";
+import { buildAppChatHandoffUrl } from "@/lib/apps/app-chat-handoff";
 
 type CreateFormValues = {
   name: string;
@@ -26,7 +28,7 @@ type CreateFormValues = {
 // Create flow: name the app + pick visibility. The backend seeds it from the
 // single starter template (no template choice). Team scope needs team
 // assignment, so the dialog offers personal/org only; re-scoping to a team
-// happens on the detail page.
+// happens from the app's MCP registry card (Manage MCP).
 export function AppCreateDialog({
   open,
   onOpenChange,
@@ -38,6 +40,7 @@ export function AppCreateDialog({
   const createApp = useCreateApp();
 
   const [scope, setScope] = useState<ResourceVisibilityScope>("personal");
+  const [environmentId, setEnvironmentId] = useState<string | null>(null);
 
   const form = useForm<CreateFormValues>({
     defaultValues: { name: "", description: "" },
@@ -48,11 +51,17 @@ export function AppCreateDialog({
       name: values.name.trim(),
       description: values.description.trim() || undefined,
       scope,
+      environmentId,
     });
     if (created) {
       onOpenChange(false);
       form.reset();
-      router.push(`/apps/${created.id}`);
+      router.push(
+        buildAppChatHandoffUrl({
+          appId: created.id,
+          appName: values.name.trim(),
+        }),
+      );
     }
   });
 
@@ -113,6 +122,13 @@ export function AppCreateDialog({
             </SelectContent>
           </Select>
         </div>
+
+        <EnvironmentSelector
+          value={environmentId}
+          onChange={setEnvironmentId}
+          hideWhenOnlyDefault
+          helpText="Confines which MCP tools the app can use to this environment. Can be changed later in settings."
+        />
       </div>
     </StandardFormDialog>
   );

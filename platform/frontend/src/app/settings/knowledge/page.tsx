@@ -29,6 +29,7 @@ import {
   SettingsSaveBar,
   SettingsSectionStack,
 } from "@/components/settings/settings-block";
+import { SmallTeamTierBanner } from "@/components/small-team-tier-banner";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -632,7 +633,7 @@ function KnowledgeSettingsContent() {
                   <p className="text-sm text-muted-foreground sm:pl-28">
                     Don't see your model?{" "}
                     <Link
-                      href="/llm/model-providers/models"
+                      href="/llm/models"
                       className="inline-flex items-center gap-0.5 text-primary underline-offset-2 hover:underline"
                     >
                       Sync models and configure embedding dimensions
@@ -794,6 +795,7 @@ function KnowledgeSettingsContent() {
 export default function KnowledgeSettingsPage() {
   return (
     <ErrorBoundary>
+      <SmallTeamTierBanner featureName="Knowledge Base with access control" />
       <KnowledgeSettingsContent />
     </ErrorBoundary>
   );

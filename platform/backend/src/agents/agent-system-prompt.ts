@@ -1,6 +1,7 @@
 import {
   buildUserSystemPromptContext,
   TOOL_LOAD_SKILL_SHORT_NAME,
+  TOOL_RUN_COMMAND_SHORT_NAME,
   TOOL_RUN_TOOL_SHORT_NAME,
   TOOL_SEARCH_TOOLS_SHORT_NAME,
 } from "@archestra/shared";
@@ -8,6 +9,8 @@ import type { Tool } from "ai";
 import { archestraMcpBranding } from "@/archestra-mcp-server";
 import { TeamModel, UserModel } from "@/models";
 import { buildSkillCatalogPrompt } from "@/skills/skill-catalog-prompt";
+import { isSkillSandboxAvailableForAgent } from "@/skills/skill-sandbox-availability";
+import { SKILL_SANDBOX_ATTACHMENTS_DIR } from "@/skills-sandbox/runtime-image";
 import {
   promptNeedsRendering,
   renderSystemPrompt,
@@ -18,6 +21,11 @@ import type { ToolExposureMode } from "@/types";
 /** @public — canonical instruction text, asserted by the assembler tests. */
 export const TOOL_DENIAL_INSTRUCTION =
   "When a tool execution is not approved by the user, do not retry it. Explain what happened and ask the user what they'd like to do instead.";
+
+/** @public — canonical preamble for a project's instructions, asserted by the
+ * assembler tests. */
+export const PROJECT_INSTRUCTIONS_PREFIX =
+  "The following are the project's instructions. Treat them as standing guidance for this conversation, second only to the user's direct messages.";
 
 /** @public — canonical instruction text, asserted by the assembler tests. */
 export const TOOL_UI_RESULT_INSTRUCTION =
@@ -46,6 +54,11 @@ export async function buildAgentSystemPrompt(params: {
   user?: { name: string; email: string };
   /** Context injected by SessionStart hooks (chat only), appended last. */
   hookSessionContext?: string;
+  /**
+   * The project's instructions (chat in a project only), injected just after the
+   * agent's own prompt. Empty/absent leaves the prompt unchanged.
+   */
+  projectInstructions?: string;
 }): Promise<string | undefined> {
   const {
     agent,
@@ -55,6 +68,7 @@ export async function buildAgentSystemPrompt(params: {
     agentId,
     user,
     hookSessionContext,
+    projectInstructions,
   } = params;
 
   const renderedPrompt = await renderAgentPrompt({
@@ -74,16 +88,28 @@ export async function buildAgentSystemPrompt(params: {
 
   // eagerly list the agent's skills in the prompt (like Claude Code /
   // opencode), but only when the agent can actually load them.
-  const skillCatalogPrompt =
+  const [skillCatalogPrompt, sandboxAvailable] = await Promise.all([
     archestraMcpBranding.getToolName(TOOL_LOAD_SKILL_SHORT_NAME) in mcpTools
-      ? await buildSkillCatalogPrompt({ organizationId, userId, agentId })
-      : null;
+      ? buildSkillCatalogPrompt({ organizationId, userId, agentId })
+      : null,
+    isSkillSandboxAvailableForAgent({ userId, organizationId, agentId }),
+  ]);
+
+  const sandboxFallbackInstruction = sandboxAvailable
+    ? buildSandboxFallbackInstruction()
+    : null;
+
+  const projectInstructionsPrompt = projectInstructions
+    ? `${PROJECT_INSTRUCTIONS_PREFIX}\n\n${projectInstructions}`
+    : null;
 
   return (
     [
       toolLoadingInstructions,
       renderedPrompt,
+      projectInstructionsPrompt,
       skillCatalogPrompt,
+      sandboxFallbackInstruction,
       TOOL_DENIAL_INSTRUCTION,
       toolResultInstructions,
       hookSessionContext,
@@ -120,6 +146,13 @@ async function renderAgentPrompt(params: {
   return renderSystemPrompt(systemPrompt, promptContext);
 }
 
+function buildSandboxFallbackInstruction(): string {
+  const runCommand = archestraMcpBranding.getToolName(
+    TOOL_RUN_COMMAND_SHORT_NAME,
+  );
+  return `You have a code execution environment: \`${runCommand}\` runs shell commands and Python in a persistent Linux workspace. When the available tools do not cover a task, you can fall back to it — for example to compute, transform files, or fetch data over the network. Files the user attaches to the conversation are staged for you under \`${SKILL_SANDBOX_ATTACHMENTS_DIR}/\`; read them from there. Write any files you produce to absolute paths in the workspace.`;
+}
+
 function buildLoadToolsWhenNeededSystemPrompt(): string {
   const searchToolsName = archestraMcpBranding.getToolName(
     TOOL_SEARCH_TOOLS_SHORT_NAME,
@@ -130,5 +163,5 @@ function buildLoadToolsWhenNeededSystemPrompt(): string {
 
   return `Some available tools are not listed upfront and must be discovered. If the visible tools do not fit the task, call \`${searchToolsName}\` to find relevant tools, then call \`${runToolName}\` with a tool name it returned. Only pass \`${runToolName}\` a tool name that \`${searchToolsName}\` returned or that appeared verbatim earlier in this conversation; if you do not have an exact name, call \`${searchToolsName}\` first.
 
-\`${runToolName}\` takes exactly two arguments: \`tool_name\` (the exact name) and \`tool_args\` (an object holding the target tool's own parameters). The \`${searchToolsName}\` parameter signatures are summaries; if a \`${runToolName}\` call is rejected as invalid, the error describes the expected input (for third-party tools, the target tool's full input schema) — use it to correct the call.`;
+\`${runToolName}\` takes exactly two arguments: \`tool_name\` (the exact name) and \`tool_args\` (an object holding the target tool's own parameters). For example, to call a tool \`maps__set_marker\` that takes a name and a \`coordinates\` object, call \`${runToolName}\` with \`tool_name: "maps__set_marker"\` and \`tool_args: { "name": "home", "coordinates": { "lat": 51.5, "lng": -0.1 } }\` — keep each parameter under its own key in \`tool_args\` and preserve nested objects as-is; do not flatten their fields into \`tool_args\`. The \`${searchToolsName}\` parameter signatures are summaries; if a \`${runToolName}\` call is rejected as invalid, the error describes the expected input (for third-party tools, the target tool's full input schema) — use it to correct the call.`;
 }

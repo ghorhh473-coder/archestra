@@ -2,10 +2,10 @@ import { createHash } from "node:crypto";
 import { RouteId } from "@archestra/shared";
 import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import { z } from "zod";
+import { userHasPermission } from "@/auth";
 import config from "@/config";
-import { projectService } from "@/services/project";
 import { FileBytesMissingError } from "@/skills-sandbox/file-storage";
-import { fileStore } from "@/skills-sandbox/file-store";
+import { FileNotDeletableError, fileStore } from "@/skills-sandbox/file-store";
 import { isInlineSafeImageMime } from "@/skills-sandbox/mime-sniff";
 import {
   ApiError,
@@ -71,6 +71,18 @@ const skillSandboxArtifactRoutes: FastifyPluginAsyncZod = async (fastify) => {
           organizationId,
           userId: user.id,
         });
+        // A project admin overseeing a foreign project may read its files
+        // read-only, even without share access. Project-scoped files only —
+        // personal files are never exposed by this fallback.
+        if (
+          !resolved &&
+          (await userHasPermission(user.id, organizationId, "project", "admin"))
+        ) {
+          resolved = await fileStore.getProjectScopedForAdmin({
+            ref: artifactId,
+            organizationId,
+          });
+        }
       } catch (error) {
         if (error instanceof FileBytesMissingError) {
           // the row exists but its bytes are gone
@@ -119,34 +131,62 @@ const skillSandboxArtifactRoutes: FastifyPluginAsyncZod = async (fastify) => {
     },
   );
 
-  if (config.projects.enabled) {
-    fastify.delete(
-      "/api/skill-sandbox/artifacts/:artifactId",
-      {
-        schema: {
-          operationId: RouteId.DeleteSkillSandboxArtifact,
-          description:
-            "Delete a persistent file. Allowed for the file's author, or " +
-            "anyone with access to the project owning the file.",
-          tags: ["Skills"],
-          // a row UUID, or an `obj_` ref for an untracked (hand-placed) object.
-          params: z.object({ artifactId: ARTIFACT_REF }),
-          response: constructResponseSchema(z.object({ ok: z.literal(true) })),
-        },
+  // A generated file exists independently of the Projects feature, so deleting
+  // one is always available (parity with the unconditional GET above). The
+  // authority still lives in `fileStore.delete` (author / project access, plus
+  // the never-deletable instructions-file guard), so ungating registration
+  // does not loosen who may delete what.
+  fastify.delete(
+    "/api/skill-sandbox/artifacts/:artifactId",
+    {
+      schema: {
+        operationId: RouteId.DeleteSkillSandboxArtifact,
+        description:
+          "Delete a persistent file. Allowed for the file's author, or " +
+          "anyone with access to the project owning the file.",
+        tags: ["Skills"],
+        // a row UUID, or an `obj_` ref for an untracked (hand-placed) object.
+        params: z.object({ artifactId: ARTIFACT_REF }),
+        response: constructResponseSchema(z.object({ ok: z.literal(true) })),
       },
-      async ({ params: { artifactId }, organizationId, user }) => {
-        const deleted = await fileStore.delete({
+    },
+    async ({ params: { artifactId }, organizationId, user }) => {
+      let deleted: boolean;
+      try {
+        deleted = await fileStore.delete({
           ref: artifactId,
           organizationId,
           userId: user.id,
         });
-        if (!deleted) {
-          throw new ApiError(404, "Artifact not found");
+        // A project admin may also delete a foreign project's files (oversight),
+        // mirroring the read path — project-scoped files only, never personal.
+        // Checked lazily so the normal path pays no extra permission lookup.
+        // Inside the try so the instructions-file guard below still applies.
+        if (
+          !deleted &&
+          (await userHasPermission(user.id, organizationId, "project", "admin"))
+        ) {
+          deleted = await fileStore.deleteProjectScopedForAdmin({
+            ref: artifactId,
+            organizationId,
+          });
         }
-        return { ok: true as const };
-      },
-    );
+      } catch (error) {
+        // The project instructions file is never deletable; surface it as a
+        // conflict rather than a generic 500.
+        if (error instanceof FileNotDeletableError) {
+          throw new ApiError(409, error.message);
+        }
+        throw error;
+      }
+      if (!deleted) {
+        throw new ApiError(404, "Artifact not found");
+      }
+      return { ok: true as const };
+    },
+  );
 
+  if (config.projects.enabled) {
     fastify.get(
       "/api/skill-sandbox/conversations/:conversationId/artifacts",
       {
@@ -165,42 +205,6 @@ const skillSandboxArtifactRoutes: FastifyPluginAsyncZod = async (fastify) => {
           conversationId,
           authorUserId: user.id,
         }),
-    );
-
-    fastify.get(
-      "/api/skill-sandbox/files",
-      {
-        schema: {
-          operationId: RouteId.GetSkillSandboxFiles,
-          description:
-            "List the calling user's persistent files (My Files): their own " +
-            "artifact files across all conversations, plus the files of " +
-            "projects shared with them.",
-          tags: ["Skills"],
-          response: constructResponseSchema(
-            z.object({ files: z.array(SandboxFileListItemSchema) }),
-          ),
-        },
-      },
-      async ({ organizationId, user }) => {
-        const [own, shared] = await Promise.all([
-          fileStore.search({
-            organizationId,
-            userId: user.id,
-            scope: { kind: "personal" },
-          }),
-          projectService.listSharedProjectFiles({
-            organizationId,
-            userId: user.id,
-          }),
-        ]);
-        // newest-first across personal + every shared project (the per-project
-        // fan-out in listSharedProjectFiles loses global ordering otherwise).
-        const files = [...own, ...shared].sort(
-          (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
-        );
-        return { files };
-      },
     );
   }
 };

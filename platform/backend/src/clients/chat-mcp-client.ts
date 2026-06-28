@@ -689,6 +689,7 @@ export async function getChatMcpTools({
   blockOnApprovalRequired,
   scheduleTriggerRunId,
   hookRunCollector,
+  repeatTracker,
 }: {
   agentName: string;
   agentId: string;
@@ -727,6 +728,14 @@ export async function getChatMcpTools({
   scheduleTriggerRunId?: string;
   /** Per-turn sink for inline `data-hook-run` entries (chat path only). */
   hookRunCollector?: CollectedHookRun[];
+  /**
+   * Per-run repeated-tool-call tracker. Run entrypoints that own a `stopWhen`
+   * pass their own instance so the breaker records into the same tracker the
+   * run's `repeatCeilingStopCondition` reads (single source of truth). Callers
+   * with no stream (e.g. the tool-listing endpoint) and tests omit it and get a
+   * fresh internal tracker.
+   */
+  repeatTracker?: ToolCallRepeatTracker;
 }): Promise<Record<string, Tool>> {
   const scopeKey = isolationKey ?? conversationId;
   const toolCacheKey = getToolCacheKey(agentId, userId, scopeKey);
@@ -742,8 +751,10 @@ export async function getChatMcpTools({
     // once per run, and every wrapper reads the tracker through this context.
     // Best-effort under concurrency: two overlapping no-abortSignal runs on the
     // same scope share this context, so a reset can clear the other's in-flight
-    // streak — fail-open (the breaker under-fires, never falsely fires).
-    cached.context.repeatTracker = new ToolCallRepeatTracker();
+    // streak — fail-open (the breaker under-fires, never falsely fires). When the
+    // caller owns the tracker, bind that instance so its stop condition reads the
+    // same streak the breaker records into.
+    cached.context.repeatTracker = repeatTracker ?? new ToolCallRepeatTracker();
     logger.info(
       {
         agentId,
@@ -863,9 +874,10 @@ export async function getChatMcpTools({
       considerContextUntrusted,
       teams,
       userTeams,
-      // One tracker per run. On a cache hit the cached context's tracker is
-      // reset (see above) so repeat counts never carry across runs.
-      repeatTracker: new ToolCallRepeatTracker(),
+      // One tracker per run: the caller's instance when it owns a stop policy,
+      // otherwise a fresh one. On a cache hit it is rebound (see above) so
+      // repeat counts never carry across runs.
+      repeatTracker: repeatTracker ?? new ToolCallRepeatTracker(),
     };
     const aiTools: Record<string, Tool> = {};
 
@@ -1057,7 +1069,8 @@ export async function fetchToolUiResource({
 /**
  * Filter tools by enabled tool IDs
  * If enabledToolIds is undefined, returns all tools (no custom selection = all enabled)
- * If enabledToolIds is empty array, returns no tools (explicit selection of zero tools)
+ * If enabledToolIds is empty array, returns only archestra built-in tools (a custom
+ *   selection of zero user-selectable tools; built-ins always bypass the selection)
  * If enabledToolIds has items, fetches tool names by IDs and filters to only include those
  *
  * @param tools - All available tools (keyed by tool name)
@@ -1080,25 +1093,15 @@ async function filterToolsByEnabledIds(
     return tools;
   }
 
-  // Empty array = explicit selection of zero tools
-  if (enabledToolIds.length === 0) {
-    logger.info(
-      {
-        totalTools: Object.keys(tools).length,
-        enabledToolIds: 0,
-        reason: "empty array - all tools explicitly disabled",
-      },
-      "All tools filtered out - user disabled all tools",
-    );
-    return {};
-  }
-
-  // Fetch tool names for the enabled IDs
+  // Fetch tool names for the enabled IDs (empty array -> empty set, leaving only
+  // the built-in bypass below to populate the result)
   const enabledToolNames = await ToolModel.getNamesByIds(enabledToolIds);
 
-  // Filter tools to only include enabled ones
+  // Filter tools to only include enabled ones.
   // Archestra built-in tools always bypass custom selection (they are auto-injected
-  // and hidden from the UI, so users cannot select them)
+  // and hidden from the UI, so users cannot select or deselect them). This is what
+  // keeps search_tools/run_tool available to search_and_run_only agents even when a
+  // conversation's custom selection enables zero user-selectable tools.
   const filteredTools: Record<string, Tool> = {};
   const excludedTools: string[] = [];
   for (const [name, tool] of Object.entries(tools)) {

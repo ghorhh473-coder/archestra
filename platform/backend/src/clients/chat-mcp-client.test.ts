@@ -1006,6 +1006,87 @@ describe("chat-mcp-client tool caching", () => {
     chatClient.clearChatMcpClient(agent.id);
     await chatClient.__test.clearToolCache(cacheKey);
   });
+
+  test("empty conversation selection keeps built-in search/run tools and drops user tools", async ({
+    makeAgent,
+    makeUser,
+    makeOrganization,
+    makeTeam,
+    makeTeamMember,
+  }) => {
+    const org = await makeOrganization();
+    const user = await makeUser();
+    const team = await makeTeam(org.id, user.id);
+    const agent = await makeAgent({ teams: [team.id] });
+    await makeTeamMember(team.id, user.id);
+    await TeamTokenModel.createTeamToken(team.id, team.name);
+
+    const cacheKey = chatClient.__test.getCacheKey(agent.id, user.id);
+    chatClient.clearChatMcpClient(agent.id);
+    await chatClient.__test.clearToolCache(cacheKey);
+
+    archestraMcpBranding.syncFromOrganization(null);
+    const searchToolsName = getArchestraToolFullName("search_tools");
+    const runToolName = getArchestraToolFullName("run_tool");
+
+    const mockClient = {
+      ping: vi.fn().mockResolvedValue({}),
+      listTools: vi.fn().mockResolvedValue({
+        tools: [
+          {
+            name: searchToolsName,
+            description: "Search tools",
+            inputSchema: {
+              type: "object",
+              properties: { query: { type: "string" } },
+            },
+          },
+          {
+            name: runToolName,
+            description: "Run tool",
+            inputSchema: {
+              type: "object",
+              properties: {
+                tool_name: { type: "string" },
+                tool_args: { type: "object" },
+              },
+              required: ["tool_name"],
+            },
+          },
+          {
+            name: "workspace__find_projects",
+            description: "Find projects",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+      }),
+      callTool: vi.fn(),
+      close: vi.fn(),
+    };
+
+    chatClient.__test.setCachedClient(
+      cacheKey,
+      mockClient as unknown as Client,
+    );
+
+    // A search_and_run_only conversation with zero user-selectable tools enabled
+    // resolves to an empty enabledToolIds; the built-in meta tools must survive.
+    const tools = await chatClient.getChatMcpTools({
+      agentName: agent.name,
+      agentId: agent.id,
+      userId: user.id,
+      organizationId: org.id,
+      enabledToolIds: [],
+    });
+
+    expect(Object.keys(tools).sort()).toEqual(
+      [runToolName, searchToolsName].sort(),
+    );
+    expect(tools).not.toHaveProperty("workspace__find_projects");
+
+    chatClient.clearChatMcpClient(agent.id);
+    await chatClient.__test.clearToolCache(cacheKey);
+  });
 });
 
 describe("filterToolsByEnabledIds", () => {
@@ -1031,13 +1112,21 @@ describe("filterToolsByEnabledIds", () => {
     expect(Object.keys(result)).toHaveLength(2);
   });
 
-  test("returns empty when enabledToolIds is empty array", async () => {
+  test("empty array retains archestra built-in tools and drops the rest", async () => {
+    archestraMcpBranding.syncFromOrganization(null);
+    const searchToolsName = getArchestraToolFullName("search_tools");
+
     const tools = {
       github__list_repos: makeMockTool(),
+      [searchToolsName]: makeMockTool("Search tools"),
     };
 
+    // Empty custom selection = zero user-selectable tools enabled. Built-ins
+    // (search_tools/run_tool) must still survive so search_and_run_only agents
+    // can call tools; only the user-selectable tool is dropped.
     const result = await filterToolsByEnabledIds(tools, []);
-    expect(Object.keys(result)).toHaveLength(0);
+
+    expect(Object.keys(result)).toEqual([searchToolsName]);
   });
 
   test("white-labeled built-in tools bypass custom selection filtering", async ({
@@ -1091,6 +1180,62 @@ describe("filterToolsByEnabledIds", () => {
 
     expect(Object.keys(result)).toContain("github__list_repos");
     expect(Object.keys(result)).not.toContain("slack__send_message");
+  });
+
+  test("empty array returns nothing when there are no built-in tools", async () => {
+    archestraMcpBranding.syncFromOrganization(null);
+    const tools = {
+      github__list_repos: makeMockTool(),
+      slack__send_message: makeMockTool(),
+    };
+
+    // No archestra built-ins to bypass the selection, so disabling every
+    // user-selectable tool genuinely yields an empty set.
+    const result = await filterToolsByEnabledIds(tools, []);
+
+    expect(Object.keys(result)).toHaveLength(0);
+  });
+
+  test("empty array retains white-labeled built-in tools", async () => {
+    archestraMcpBranding.syncFromOrganization({
+      appName: "Acme Copilot",
+      iconLogo: null,
+    });
+    const brandedWhoami = getArchestraToolFullName(TOOL_WHOAMI_SHORT_NAME, {
+      appName: "Acme Copilot",
+      fullWhiteLabeling: true,
+    });
+
+    const tools = {
+      github__list_repos: makeMockTool(),
+      [brandedWhoami]: makeMockTool("Who am I"),
+    };
+
+    // The bypass must recognize the white-labeled built-in name under an empty
+    // selection too, or white-label deployments lose search/run.
+    const result = await filterToolsByEnabledIds(tools, []);
+
+    expect(Object.keys(result)).toEqual([brandedWhoami]);
+  });
+
+  test("empty array drops names that carry the archestra prefix but are not real built-ins", async () => {
+    archestraMcpBranding.syncFromOrganization(null);
+    const searchToolsName = getArchestraToolFullName("search_tools");
+    const prefixedNonTool = searchToolsName.replace(
+      "search_tools",
+      "bogus_not_a_tool",
+    );
+
+    const tools = {
+      [prefixedNonTool]: makeMockTool("Looks built-in but is not"),
+      [searchToolsName]: makeMockTool("Search tools"),
+    };
+
+    // isToolName validates the short name against the known set, so a name that
+    // merely carries the prefix is treated as user-selectable and filtered out.
+    const result = await filterToolsByEnabledIds(tools, []);
+
+    expect(Object.keys(result)).toEqual([searchToolsName]);
   });
 });
 
@@ -1685,7 +1830,6 @@ describe("buildArchestraToolOutput", () => {
   });
 
   test.for([
-    "scaffold_app",
     "edit_app",
     "render_app",
   ] as const)("returns the rich shape for a direct %s result so chat can mount the app runtime", async (shortName, {
@@ -1712,25 +1856,47 @@ describe("buildArchestraToolOutput", () => {
     });
   });
 
-  test("returns the rich shape for a run_tool dispatch with a bare scaffold_app target", async ({
+  // scaffold_app only seeds the boilerplate template, which chat never renders —
+  // so its result stays plain text (no structuredContent passthrough).
+  test("returns plain text for a direct scaffold_app result", async ({
+    makeAgent,
+  }) => {
+    const agent = await makeAgent();
+    const result = await buildArchestraToolOutput({
+      response: {
+        content: [
+          { type: "text" as const, text: `Created app "Todo" (app-1).` },
+        ],
+        structuredContent: { id: "app-1", name: "Todo", latestVersion: 1 },
+        isError: false,
+      },
+      toolName: "archestra__scaffold_app",
+      toolArguments: {},
+      agentId: agent.id,
+    });
+
+    expect(result).toBe(`Created app "Todo" (app-1).`);
+  });
+
+  test("returns the rich shape for a run_tool dispatch with a bare edit_app target", async ({
     makeAgent,
   }) => {
     const agent = await makeAgent();
     const appResponse = {
-      content: [{ type: "text" as const, text: `Created app "Todo" (app-1).` }],
-      structuredContent: { id: "app-1", name: "Todo", latestVersion: 1 },
+      content: [{ type: "text" as const, text: `Edited app "Todo" (app-1).` }],
+      structuredContent: { id: "app-1", name: "Todo", latestVersion: 2 },
       isError: false,
     };
 
     const result = await buildArchestraToolOutput({
       response: appResponse,
       toolName: "archestra__run_tool",
-      toolArguments: { tool_name: "scaffold_app", tool_args: {} },
+      toolArguments: { tool_name: "edit_app", tool_args: {} },
       agentId: agent.id,
     });
 
     expect(result).toMatchObject({
-      content: `Created app "Todo" (app-1).`,
+      content: `Edited app "Todo" (app-1).`,
       structuredContent: { id: "app-1" },
     });
   });

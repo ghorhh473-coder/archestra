@@ -6,13 +6,16 @@ import {
 } from "@archestra/shared";
 import { NoSuchToolError } from "ai";
 import { vi } from "vitest";
+import { PROJECT_INSTRUCTIONS_PREFIX } from "@/agents/agent-system-prompt";
 import { archestraMcpBranding } from "@/archestra-mcp-server";
-import { MessageModel, SkillModel } from "@/models";
+import { MessageModel, ProjectModel, SkillModel } from "@/models";
 import ActiveChatRunModel from "@/models/chat-active-run";
+import ConversationModel from "@/models/conversation";
 import ConversationAttachmentModel from "@/models/conversation-attachment";
 import type { FastifyInstanceWithZod } from "@/server";
 import { createFastifyInstance } from "@/server";
 import { activeChatRunService } from "@/services/active-chat-run";
+import { projectService } from "@/services/project";
 import { afterEach, beforeEach, describe, expect, test } from "@/test";
 import type { User } from "@/types";
 
@@ -708,6 +711,86 @@ describe("POST /api/chat toUIMessageStream onError deduplication", () => {
     expect(mockStreamText.mock.calls[0]?.[0].temperature).toBeUndefined();
   });
 
+  test("injects a project's instructions into the system prompt for a project chat", async () => {
+    const project = await ProjectModel.create({
+      organizationId,
+      userId: user.id,
+      name: "Instr Project",
+      description: null,
+    });
+    await projectService.setInstructions({
+      id: project.id,
+      organizationId,
+      userId: user.id,
+      content: "STREAM-INSTRUCTIONS-MARKER",
+    });
+    const projectConversation = await ConversationModel.create({
+      userId: user.id,
+      organizationId,
+      agentId,
+      projectId: project.id,
+    });
+    mockStreamText.mockClear();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        id: projectConversation.id,
+        messages: [
+          { id: "msg-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    await executionPromise;
+
+    const systemPrompt = mockStreamText.mock.calls[0]?.[0].system;
+    expect(systemPrompt).toContain(PROJECT_INSTRUCTIONS_PREFIX);
+    expect(systemPrompt).toContain("STREAM-INSTRUCTIONS-MARKER");
+  });
+
+  test("injects nothing for a project chat whose instructions are empty", async () => {
+    const project = await ProjectModel.create({
+      organizationId,
+      userId: user.id,
+      name: "Empty Instr Project",
+      description: null,
+    });
+    // A whitespace-only file is a real, kept file that injects nothing.
+    await projectService.setInstructions({
+      id: project.id,
+      organizationId,
+      userId: user.id,
+      content: "   ",
+    });
+    const projectConversation = await ConversationModel.create({
+      userId: user.id,
+      organizationId,
+      agentId,
+      projectId: project.id,
+    });
+    mockStreamText.mockClear();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        id: projectConversation.id,
+        messages: [
+          { id: "msg-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    await executionPromise;
+
+    const systemPrompt = mockStreamText.mock.calls[0]?.[0].system;
+    expect(systemPrompt ?? "").not.toContain(PROJECT_INSTRUCTIONS_PREFIX);
+  });
+
   test("prepends load-tools guidance when the agent loads tools when needed", async () => {
     const { AgentModel } = await import("@/models");
     await AgentModel.update(agentId, {
@@ -752,6 +835,55 @@ describe("POST /api/chat toUIMessageStream onError deduplication", () => {
     // error as the place that describes the expected input
     expect(systemPrompt).toContain("takes exactly two arguments");
     expect(systemPrompt).toContain("the error describes the expected input");
+  });
+
+  test("passes the search/run tools it tells the model to call to streamText", async () => {
+    const { AgentModel } = await import("@/models");
+    await AgentModel.update(agentId, {
+      toolExposureMode: "search_and_run_only",
+      systemPrompt: "You are a careful analyst.",
+    });
+    const searchToolsName = archestraMcpBranding.getToolName(
+      TOOL_SEARCH_TOOLS_SHORT_NAME,
+    );
+    const runToolName = archestraMcpBranding.getToolName(
+      TOOL_RUN_TOOL_SHORT_NAME,
+    );
+    mockStreamText.mockClear();
+    mockGetChatMcpTools.mockResolvedValueOnce({
+      [searchToolsName]: { description: "Search tools" },
+      [runToolName]: { description: "Run tool" },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/chat",
+      payload: {
+        id: conversationId,
+        messages: [
+          {
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    await executionPromise;
+
+    expect(mockStreamText).toHaveBeenCalledTimes(1);
+    const call = mockStreamText.mock.calls[0]?.[0];
+    // The system prompt instructs the model to call these tools; they must also
+    // be present in the request, or the model is told to call tools it cannot
+    // invoke (the search_and_run_only zero-tools failure).
+    expect(call.system).toContain(
+      `call \`${searchToolsName}\` to find relevant tools`,
+    );
+    expect(Object.keys(call.tools ?? {})).toEqual(
+      expect.arrayContaining([searchToolsName, runToolName]),
+    );
   });
 
   test("adds load-tools guidance when the agent has no authored prompt", async () => {

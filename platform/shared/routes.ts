@@ -83,6 +83,7 @@ export const RouteId = {
   McpGatewayGet: "mcpGatewayGet",
   McpGatewayPost: "mcpGatewayPost",
   McpProxyPost: "mcpProxyPost", // Frontend session-based proxy to MCP Gateway
+  McpServerProxyPost: "mcpServerProxyPost", // Session-based proxy to one installed server's MCP App runtime
 
   // MCP Server Installation Request Routes
   GetMcpServerInstallationRequests: "getMcpServerInstallationRequests",
@@ -302,6 +303,7 @@ export const RouteId = {
   UpdateChatConversation: "updateChatConversation",
   SetConversationHooksDebug: "setConversationHooksDebug",
   DeleteChatConversation: "deleteChatConversation",
+  ClearChatConversationErrors: "clearChatConversationErrors",
   CompactChatConversation: "compactChatConversation",
   GenerateChatConversationTitle: "generateChatConversationTitle",
   GetChatMcpTools: "getChatMcpTools",
@@ -315,6 +317,7 @@ export const RouteId = {
   GetSharedConversation: "getSharedConversation",
   ForkSharedConversation: "forkSharedConversation",
   GetChatAttachmentContent: "getChatAttachmentContent",
+  DeleteChatAttachment: "deleteChatAttachment",
   GetLlmModels: "getLlmModels",
   SyncLlmModels: "syncLlmModels",
 
@@ -557,8 +560,8 @@ export const RouteId = {
   EnableSkillToolDefaults: "enableSkillToolDefaults",
   GetSkillSandboxArtifact: "getSkillSandboxArtifact",
   GetSkillSandboxConversationArtifacts: "getSkillSandboxConversationArtifacts",
-  GetSkillSandboxFiles: "getSkillSandboxFiles",
   CreateProject: "createProject",
+  CreateProjectFromConversation: "createProjectFromConversation",
   GetProjects: "getProjects",
   GetProject: "getProject",
   UpdateProject: "updateProject",
@@ -566,6 +569,10 @@ export const RouteId = {
   DeleteProject: "deleteProject",
   GetProjectConversations: "getProjectConversations",
   GetProjectFiles: "getProjectFiles",
+  GetProjectInstructions: "getProjectInstructions",
+  SetProjectInstructions: "setProjectInstructions",
+  PinProject: "pinProject",
+  UnpinProject: "unpinProject",
   DeleteSkillSandboxArtifact: "deleteSkillSandboxArtifact",
 
   // Audit Log Routes
@@ -587,9 +594,11 @@ export const RouteId = {
   CreateConnectionSetup: "createConnectionSetup",
   GetConnectionSetupScript: "getConnectionSetupScript",
   CreateConnectionVirtualKey: "createConnectionVirtualKey",
+  CreateConnectionPassthroughKey: "createConnectionPassthroughKey",
 
   // MCP App Routes
   GetApps: "getApps",
+  GetExternalApp: "getExternalApp",
   CreateApp: "createApp",
   GetApp: "getApp",
   UpdateApp: "updateApp",

@@ -22,6 +22,7 @@ vi.mock("@/clients/llm-client", async (importOriginal) => {
 
 import { archestraMcpBranding } from "@/archestra-mcp-server";
 import { createLLMModel } from "@/clients/llm-client";
+import { ToolCallRepeatTracker } from "@/clients/tool-call-repeat-tracker";
 import ConversationModel from "@/models/conversation";
 import MessageModel from "@/models/message";
 import { test } from "@/test";
@@ -115,7 +116,68 @@ describe("prepareMessagesForProvider", () => {
     });
   });
 
-  it("leaves non-anthropic file parts unchanged", () => {
+  it.each([
+    "openai",
+    "openrouter",
+    "groq",
+    "xai",
+    "mistral",
+    "cohere",
+  ] as const)("inlines csv and json file parts as text for %s", (provider) => {
+    const messages = __prepareTest.prepareMessagesForProvider({
+      provider,
+      messages: [
+        {
+          role: "user",
+          parts: [
+            {
+              type: "file",
+              mediaType: "text/csv",
+              filename: "report.csv",
+              url: "data:text/csv;base64,YSxiLGM=",
+            },
+            {
+              type: "file",
+              mediaType: "application/json",
+              filename: "data.json",
+              url: "data:application/json;base64,eyJhIjoxfQ==",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(messages[0].parts).toEqual([
+      { type: "text", text: '[Attachment "report.csv" (text/csv)]\n\na,b,c' },
+      {
+        type: "text",
+        text: '[Attachment "data.json" (application/json)]\n\n{"a":1}',
+      },
+    ]);
+  });
+
+  it("leaves image file parts unchanged for convert providers", () => {
+    const message = {
+      role: "user" as const,
+      parts: [
+        {
+          type: "file",
+          mediaType: "image/png",
+          filename: "shot.png",
+          url: "data:image/png;base64,iVBORw0KGgo=",
+        },
+      ],
+    };
+
+    const messages = __prepareTest.prepareMessagesForProvider({
+      provider: "openai",
+      messages: [message],
+    });
+
+    expect(messages[0]).toBe(message);
+  });
+
+  it("leaves text-document file parts unchanged for gemini (inlineData passthrough)", () => {
     const message = {
       role: "user" as const,
       parts: [
@@ -124,6 +186,55 @@ describe("prepareMessagesForProvider", () => {
           mediaType: "text/csv",
           filename: "report.csv",
           url: "data:text/csv;base64,YSxiLGM=",
+        },
+      ],
+    };
+
+    const messages = __prepareTest.prepareMessagesForProvider({
+      provider: "gemini",
+      messages: [message],
+    });
+
+    expect(messages[0]).toBe(message);
+  });
+
+  it("inlines application/csv and excel-as-text for cohere (its SDK relays base64 undecoded otherwise)", () => {
+    const messages = __prepareTest.prepareMessagesForProvider({
+      provider: "cohere",
+      messages: [
+        {
+          role: "user",
+          parts: [
+            {
+              type: "file",
+              mediaType: "application/csv",
+              filename: "report.csv",
+              url: "data:application/csv;base64,YSxiLGM=",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(messages[0].parts).toEqual([
+      {
+        type: "text",
+        text: '[Attachment "report.csv" (application/csv)]\n\na,b,c',
+      },
+    ]);
+  });
+
+  it("leaves an invalid-UTF-8 text-document file part unchanged for convert providers", () => {
+    // `//4=` is base64 for bytes [0xFF, 0xFE] — not valid UTF-8 (a binary file
+    // mislabeled as a text document). It must NOT be inlined as garbage text.
+    const message = {
+      role: "user" as const,
+      parts: [
+        {
+          type: "file",
+          mediaType: "application/vnd.ms-excel",
+          filename: "book.xls",
+          url: "data:application/vnd.ms-excel;base64,//4=",
         },
       ],
     };
@@ -1115,10 +1226,10 @@ describe("buildChatStopConditions", () => {
       iconLogo: null,
     });
 
-    const stopConditions = buildChatStopConditions();
+    const stopConditions = buildChatStopConditions(new ToolCallRepeatTracker());
     const toolNames = getChatStopToolNames();
 
-    expect(stopConditions).toHaveLength(3);
+    expect(stopConditions).toHaveLength(4);
     expect(toolNames.swapAgentToolName).toBe("acme_control_plane__swap_agent");
     expect(toolNames.swapToDefaultAgentToolName).toBe(
       "acme_control_plane__swap_to_default_agent",

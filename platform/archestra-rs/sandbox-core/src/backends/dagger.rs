@@ -10,7 +10,6 @@ use std::time::Duration;
 
 use base64::Engine;
 use dagger_sdk::core::DAGGER_ENGINE_VERSION;
-use dagger_sdk::core::cli_session::DaggerSessionProc;
 use dagger_sdk::core::connect_params::ConnectParams;
 use dagger_sdk::core::downloader::Downloader;
 use dagger_sdk::core::gql_client::GraphQlExtension;
@@ -21,8 +20,8 @@ use dagger_sdk::{
     ReturnType,
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
-use tokio::sync::{OnceCell, mpsc, oneshot};
+use tokio::process::{Child, Command};
+use tokio::sync::{OnceCell, broadcast, mpsc, oneshot};
 use tracing::Span;
 
 use crate::backend::{ArtifactRequest, Backend, RunRequest, SandboxBackend};
@@ -79,6 +78,11 @@ const DAGGER_RUNNER_HOST_ENV: &str = "_EXPERIMENTAL_DAGGER_RUNNER_HOST";
 const DAGGER_CLI_BIN_ENV: &str = "_EXPERIMENTAL_DAGGER_CLI_BIN";
 
 const SESSION_READY_TIMEOUT: Duration = Duration::from_secs(60);
+/// How often an idle session pings the engine to keep its `kube-pod://` attachable
+/// channel warm. The channel was observed going half-open after minutes of idle;
+/// 30s stays well inside that. A Dagger transport concern, so it lives here rather
+/// than in the backend-agnostic session actor.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 /// the dagger SDK message emitted when the engine accepted `/query` but timed
 /// out waiting for this client's session attachables. see [`classify_engine_fault`].
 const SESSION_ATTACHABLES_WAIT_ERROR: &str = "waiting for client session attachables";
@@ -317,6 +321,45 @@ fn build_session_command(cli: &Path, workdir: &Path, runner_host: Option<&str>) 
     cmd
 }
 
+/// Owns the spawned `dagger session` CLI child and the broadcast that stops our
+/// stdout/stderr reader tasks. Replaces the SDK's `DaggerSessionProc`, whose
+/// `shutdown()` only awaits the child's *voluntary* exit (it sends no signal and
+/// never closes stdin), so it blocks forever on a reconnect-looping child —
+/// leaving an orphaned session hammering the engine. We own the child and
+/// force-kill it instead. `Query.proc` is left `None`: it is a pure keep-alive
+/// the SDK plumbs through clones, never the transport (that is `graphql_client`).
+struct SessionProc {
+    child: Child,
+    shutdown: broadcast::Sender<()>,
+}
+
+impl SessionProc {
+    fn subscribe_shutdown(&self) -> broadcast::Receiver<()> {
+        self.shutdown.subscribe()
+    }
+
+    /// Stop the reader tasks, then forcibly SIGKILL and reap the child. Bounded,
+    /// unlike the SDK's wait-for-voluntary-exit teardown. Consumes `self` so the
+    /// child has exactly one owner. On the connect-abort path this is never
+    /// reached; `kill_on_drop(true)` reaps the dropped child there instead.
+    async fn shutdown(mut self) {
+        let _ = self.shutdown.send(());
+        // `kill()` is SIGKILL + reap. If the child already exited, `start_kill`
+        // errors before the internal wait, so reap explicitly to avoid a zombie.
+        if let Err(err) = self.child.kill().await {
+            tracing::debug!(error = %err, "dagger session child kill errored; reaping");
+            let _ = self.child.wait().await;
+        }
+    }
+}
+
+impl From<Child> for SessionProc {
+    fn from(child: Child) -> Self {
+        let (shutdown, _) = broadcast::channel::<()>(1);
+        Self { child, shutdown }
+    }
+}
+
 /// Spawn the `dagger session` CLI child and read its `ConnectParams` handshake —
 /// a faithful reimplementation of dagger-sdk's private `CliSession::get_conn`,
 /// pinned to `=0.21.5`. The ordering is load-bearing: take stdout/stderr off the
@@ -325,7 +368,7 @@ fn build_session_command(cli: &Path, workdir: &Path, runner_host: Option<&str>) 
 /// the first JSON line as `ConnectParams`.
 async fn spawn_and_read_connect_params(
     mut cmd: Command,
-) -> eyre::Result<(ConnectParams, DaggerSessionProc)> {
+) -> eyre::Result<(ConnectParams, SessionProc)> {
     let mut child = cmd.spawn()?;
     let stdout = child
         .stdout
@@ -335,7 +378,7 @@ async fn spawn_and_read_connect_params(
         .stderr
         .take()
         .ok_or_else(|| eyre::eyre!("could not acquire stderr from the dagger session"))?;
-    let session: DaggerSessionProc = child.into();
+    let session: SessionProc = child.into();
 
     let (sender, receiver) = oneshot::channel::<ConnectParams>();
     let mut sender = Some(sender);
@@ -410,21 +453,68 @@ where
     let (conn, proc) = spawn_and_read_connect_params(cmd)
         .await
         .map_err(ConnectError::FailedToConnect)?;
-    let proc = Arc::new(proc);
 
+    // `proc: None` — we own the CLI child via `proc` and shut it down ourselves;
+    // the field is only an SDK keep-alive, never the transport.
     let client = Query {
-        proc: Some(proc.clone()),
+        proc: None,
         selection: Default::default(),
         graphql_client: Arc::new(DefaultGraphQLClient::new(&conn, &cfg)),
     };
 
+    // Keep the attachable channel warm across idle gaps so the next request doesn't
+    // meet a half-open channel. A failing ping is only logged — a dead channel is
+    // recovered reactively when the next request respawns.
+    let keepalive = spawn_channel_keepalive(client.clone(), proc.subscribe_shutdown());
+
     let outcome = f(client).await;
-    // `DaggerSessionProc` has no `Drop`, so shut down explicitly on success and
-    // error to release the engine session and reader tasks. The readiness-timeout
-    // abort path never reaches this line; `kill_on_drop(true)` on the child reaps
-    // it there instead.
-    let _ = proc.shutdown().await;
+    // Force-kill the child on teardown (success and error alike) to release the
+    // engine session and reader tasks. Unlike the SDK's `shutdown()`, this never
+    // blocks on a reconnect-looping child. The readiness-timeout abort path never
+    // reaches this line; `kill_on_drop(true)` reaps the dropped child there.
+    proc.shutdown().await;
+    keepalive.abort();
     outcome.map_err(ConnectError::DaggerContext)
+}
+
+/// Background task that pings the engine on `KEEPALIVE_INTERVAL` to keep an idle
+/// session's attachable channel warm. `version()` is the cheapest query that
+/// still exercises the channel.
+fn spawn_channel_keepalive(
+    client: DaggerConn,
+    shutdown: broadcast::Receiver<()>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(keepalive_loop(KEEPALIVE_INTERVAL, shutdown, move || {
+        let client = client.clone();
+        async move {
+            if let Err(err) = client.version().await {
+                tracing::warn!(error = %err, "dagger session keepalive ping failed");
+            }
+        }
+    }))
+}
+
+/// Tick `ping` every `interval` until the shutdown broadcast fires. The transport
+/// ping is injected so the loop's control flow is testable without a live engine.
+async fn keepalive_loop<F, Fut>(
+    interval: Duration,
+    mut shutdown: broadcast::Receiver<()>,
+    mut ping: F,
+) where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let mut tick = tokio::time::interval(interval);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // the first tick fires immediately; skip it so a freshly-connected session
+    // isn't pinged before it has had a chance to go idle.
+    tick.tick().await;
+    loop {
+        tokio::select! {
+            _ = shutdown.recv() => break,
+            _ = tick.tick() => ping().await,
+        }
+    }
 }
 
 /// connect to the Dagger engine and drive the generic actor loop for the
@@ -673,12 +763,76 @@ async fn checkpoint(client: &DaggerConn, container: Container) -> Result<Contain
         .map(|id| client.load_container_from_id(id))
 }
 
+/// each replayed command/upload/mount appends overlay layers to the rootfs, and
+/// the checkpoint (which flattens the GraphQL query, not the filesystem) never
+/// squashes them. once the `lowerdir=a:b:c:...` chain grows past the kernel's
+/// single-page (~4 KB) mount-options limit, `mount(2)` rejects the overlay with
+/// an opaque `ENOENT`. fail fast with a clear terminal error well before that.
+///
+/// this is a heuristic, not an exact bound, in three ways: the real limit is on
+/// the lowerdir *string length*, not a fixed entry count; BuildKit's
+/// content-addressed dedup means the layer-op count over-estimates the distinct
+/// layers actually chained (so the guard errs toward firing early); and the warm
+/// base's own image + setup layers consume the same mount-options budget but are
+/// not counted here. so a rare zero-dedup session can still exceed the kernel
+/// limit below this count, in which case the raw overlay error surfaces as today.
+const MAX_REPLAY_FS_LAYERS: usize = 256;
+
+/// overlay layers a replay step appends to the rootfs (`with_exec`/`with_new_file`
+/// each snapshot the filesystem; `with_workdir`/`with_user`/env changes don't).
+fn replay_step_fs_layers(step: &ReplayStep) -> usize {
+    match step {
+        // with_exec
+        ReplayStep::Command(_) => 1,
+        // with_new_file + with_exec
+        ReplayStep::File(_) => 2,
+        // with_new_file per file (base64 also runs a decode exec) + one chown exec
+        ReplayStep::SkillMount(mount) => {
+            mount
+                .files
+                .iter()
+                .map(|file| if file.encoding == "utf8" { 1 } else { 2 })
+                .sum::<usize>()
+                + 1
+        }
+    }
+}
+
+fn replay_fs_layers(steps: &[ReplayStep]) -> usize {
+    steps.iter().map(replay_step_fs_layers).sum()
+}
+
+/// build the terminal history-limit error with consistent, actionable wording;
+/// `detail` names why we tripped (the layer estimate, or the overlay mount).
+fn history_limit_error(detail: &str) -> SandboxError {
+    SandboxError::HistoryLimitReached {
+        message: format!(
+            "sandbox command history is too long to replay ({detail}); \
+             start a fresh sandbox to continue"
+        ),
+    }
+}
+
+/// reject a replay log that would overflow the overlay mount before any container
+/// work happens, turning the opaque kernel `ENOENT` into a diagnosable error.
+fn check_replay_layer_budget(steps: &[ReplayStep]) -> Result<()> {
+    let layers = replay_fs_layers(steps);
+    if layers > MAX_REPLAY_FS_LAYERS {
+        return Err(history_limit_error(&format!(
+            "{layers}/{MAX_REPLAY_FS_LAYERS} filesystem layers"
+        )));
+    }
+    Ok(())
+}
+
 #[tracing::instrument(
     name = "sandbox.materialize",
     skip_all,
     fields(replay.len = req.replay_steps.len())
 )]
 async fn materialize(client: &DaggerConn, warm: Container, req: &RunRequest) -> Result<Container> {
+    check_replay_layer_budget(&req.replay_steps)?;
+
     let mut container = warm;
     let mut budget = ChainBudget::new();
 
@@ -887,16 +1041,39 @@ fn any_exit_opts<'a>() -> ContainerWithExecOpts<'a> {
 /// `CommandFailed`; everything else is a real transport/engine failure, tagged
 /// with the specific fault so the session layer can pick a retry policy.
 fn from_sdk(err: DaggerError) -> SandboxError {
-    match exec_exit_code(&err) {
-        Some(exit_code) => SandboxError::CommandFailed {
+    if let Some(exit_code) = exec_exit_code(&err) {
+        return SandboxError::CommandFailed {
             exit_code,
             message: err.to_string(),
-        },
-        None => SandboxError::EngineUnreachable {
-            fault: classify_engine_fault(&err),
-            message: err.to_string(),
-        },
+        };
     }
+    // backstop for the replay-layer budget: an overlong chain whose layer
+    // estimate slipped under the budget still fails at the kernel overlay mount.
+    // relabel that exact failure so it surfaces as the terminal, per-call history
+    // limit instead of a phantom engine outage (which would trip the cooldown).
+    if is_overlay_mount_overflow(&err) {
+        return history_limit_error("overlay mount-options limit reached");
+    }
+    SandboxError::EngineUnreachable {
+        fault: classify_engine_fault(&err),
+        message: err.to_string(),
+    }
+}
+
+/// the kernel rejects an overlay mount whose `lowerdir=a:b:c:...` option string
+/// outgrows its single-page limit; dagger reports it as a domain error on the
+/// rootfs mount whose data carries the oversized `lowerdir=` and fails with
+/// `ENOENT`. key on that full signature (not a bare "overlay" mention) so an
+/// unrelated, retryable overlay mount failure is never made terminal — a too-
+/// narrow match just degrades to the previous engine-unreachable behaviour.
+fn is_overlay_mount_overflow(err: &DaggerError) -> bool {
+    matches!(
+        err,
+        DaggerError::Query(GraphQLError::DomainError { message, .. })
+            if message.contains("mount rootfs")
+                && message.contains("lowerdir=")
+                && message.contains("no such file or directory")
+    )
 }
 
 /// build an engine-unreachable error from a non-exec SDK failure (warm-base
@@ -922,6 +1099,26 @@ fn classify_engine_fault(err: &DaggerError) -> EngineFault {
         }
         _ => EngineFault::Unreachable,
     }
+}
+
+/// recover an engine fault from a *panic* payload. dagger-sdk 0.21.5 `unwrap()`s
+/// GraphQL errors inside generated lazy-arg resolvers (`gen.rs` `into_id().unwrap()`),
+/// which resolve during exec evaluation — so a stale-attachables timeout reaches
+/// us as a panic rather than a typed `DaggerError`, bypassing [`from_sdk`] /
+/// [`classify_engine_fault`]. the panic message still embeds the engine's text,
+/// enough to route it back onto the existing stale-attachables respawn path
+/// instead of wedging the session.
+///
+/// the match is intentionally as narrow as the typed path: *only* the
+/// attachables timeout maps to a fault. the engine emits that text when it gave
+/// up waiting for the client's attachables *before* running the query, so a
+/// command-executing `run` can be retried safely (nothing ran). a generic
+/// transport panic carries no fault and stays a fatal `Internal`, preserving the
+/// session layer's mid-flight non-retry guard for `run` / `read_artifact`.
+pub(crate) fn engine_fault_from_panic(message: &str) -> Option<EngineFault> {
+    message
+        .contains(SESSION_ATTACHABLES_WAIT_ERROR)
+        .then_some(EngineFault::StaleAttachables)
 }
 
 /// pull a process exit code out of the engine's typed `EXEC_ERROR` extension.
@@ -955,6 +1152,7 @@ mod tests {
     use std::ffi::OsStr;
 
     use super::*;
+    use crate::{ReplayCommand, ReplaySkillMount};
     use dagger_sdk::core::gql_client::GraphQLErrorMessage;
 
     #[test]
@@ -1059,7 +1257,7 @@ mod tests {
         assert_eq!(conn.port, 12345);
         assert_eq!(conn.session_token, "tok");
 
-        let _ = proc.shutdown().await;
+        proc.shutdown().await;
         std::fs::remove_file(&script).ok();
     }
 
@@ -1071,7 +1269,8 @@ mod tests {
         let script = write_fake_session("#!/bin/sh\nexit 0\n");
         let cmd = build_session_command(&script, Path::new("/"), None);
 
-        // `DaggerSessionProc` isn't `Debug`, so match instead of `unwrap_err`.
+        // the success arm holds a `SessionProc` (not `Debug`), so match instead
+        // of `unwrap_err`.
         let Err(err) = spawn_and_read_connect_params(cmd).await else {
             panic!("expected an error when the child exits without reporting params");
         };
@@ -1114,6 +1313,95 @@ mod tests {
             "child {pid} outlived its dropped handle (kill_on_drop missing?)"
         );
         std::fs::remove_file(&script).ok();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn shutdown_reaps_a_child_that_refuses_to_exit() {
+        // Regression for the dagger zombie: teardown must forcibly reap the CLI
+        // child even when it never exits on its own (the reconnect-loop shape).
+        // The SDK's `DaggerSessionProc::shutdown` only broadcasts to our reader
+        // tasks and then *awaits* the child's voluntary exit — no signal, no
+        // stdin close — so it blocked here forever. `SessionProc::shutdown`
+        // SIGKILLs and reaps instead, so it returns promptly and leaves no
+        // orphaned `dagger session` hammering the engine.
+        let script = write_fake_session("#!/bin/sh\nsleep 120\n");
+        let mut cmd = build_session_command(&script, Path::new("/"), None);
+        let child = cmd.spawn().unwrap();
+        let pid = child.id().expect("a spawned child has a pid");
+        let proc: SessionProc = child.into();
+
+        let returned = tokio::time::timeout(Duration::from_secs(5), proc.shutdown()).await;
+        assert!(
+            returned.is_ok(),
+            "shutdown() must return promptly for a child that never exits on its own"
+        );
+        assert!(
+            process_finished(pid),
+            "shutdown() must forcibly reap the child"
+        );
+        std::fs::remove_file(&script).ok();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn shutdown_reaps_a_child_that_already_exited() {
+        // If the child exits on its own first, `kill()` errors before its internal
+        // wait; shutdown() must still reap the zombie rather than leak it.
+        let script = write_fake_session("#!/bin/sh\nexit 0\n");
+        let mut cmd = build_session_command(&script, Path::new("/"), None);
+        let child = cmd.spawn().unwrap();
+        let pid = child.id().expect("a spawned child has a pid");
+        let proc: SessionProc = child.into();
+
+        // wait until the child has exited (becomes a zombie awaiting reap).
+        for _ in 0..100 {
+            if process_finished(pid) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        let returned = tokio::time::timeout(Duration::from_secs(5), proc.shutdown()).await;
+        assert!(returned.is_ok(), "shutdown() must return promptly");
+        assert!(
+            process_finished(pid),
+            "shutdown() must reap the exited child"
+        );
+        std::fs::remove_file(&script).ok();
+    }
+
+    #[tokio::test]
+    async fn keepalive_loop_pings_until_shutdown() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        let (shutdown_tx, shutdown_rx) = broadcast::channel::<()>(1);
+        let pings = Arc::new(AtomicU64::new(0));
+        let counter = pings.clone();
+        let handle = tokio::spawn(keepalive_loop(
+            Duration::from_millis(10),
+            shutdown_rx,
+            move || {
+                let counter = counter.clone();
+                async move {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                }
+            },
+        ));
+
+        // let several ticks fire (the immediate first tick is skipped), then stop.
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        shutdown_tx.send(()).unwrap();
+        // the loop must observe the broadcast and return; a hang here is a failure.
+        tokio::time::timeout(Duration::from_secs(1), handle)
+            .await
+            .expect("keepalive loop must stop on shutdown")
+            .unwrap();
+
+        assert!(
+            pings.load(Ordering::Relaxed) >= 2,
+            "keepalive must ping repeatedly before shutdown"
+        );
     }
 
     #[test]
@@ -1209,6 +1497,36 @@ mod tests {
 
         let generic = domain_error("connection reset", None);
         assert_eq!(classify_engine_fault(&generic), EngineFault::Unreachable);
+    }
+
+    #[test]
+    fn engine_fault_from_panic_recovers_only_the_attachables_timeout() {
+        // the dagger SDK unwraps the GraphQL error, so it reaches us as the
+        // `Debug` rendering of the failed `Result` inside a panic payload.
+        let attachables = "called `Result::unwrap()` on an `Err` value: \
+             Query(DomainError { message: \"waiting for client session attachables: \
+             context deadline exceeded\" })";
+        assert_eq!(
+            engine_fault_from_panic(attachables),
+            Some(EngineFault::StaleAttachables)
+        );
+
+        // an unrelated panic must stay fatal (no respawn/retry).
+        assert_eq!(
+            engine_fault_from_panic("index out of bounds: the len is 0 but the index is 1"),
+            None
+        );
+
+        // a generic transport/engine panic carries no fault either: it is
+        // ambiguous about whether the command already ran, so it must NOT be
+        // re-tagged for retry — that ambiguity is exactly why only the
+        // pre-execution attachables timeout qualifies.
+        assert_eq!(
+            engine_fault_from_panic(
+                "called `Result::unwrap()` on an `Err` value: Query(HttpError(\"connection reset\"))"
+            ),
+            None
+        );
     }
 
     #[test]
@@ -1343,5 +1661,118 @@ mod tests {
         );
         // a file directly under root `/` has no parent dir to create.
         assert_eq!(ancestor_dirs("/file"), Vec::<String>::new());
+    }
+
+    fn command_step() -> ReplayStep {
+        ReplayStep::Command(ReplayCommand {
+            command: "echo hi".to_string(),
+            cwd: None,
+            timeout_seconds: 1,
+        })
+    }
+
+    #[test]
+    fn replay_fs_layers_weights_each_step_kind() {
+        let utf8_file = SnapshotFile {
+            skill_name: "s".to_string(),
+            path: "a.py".to_string(),
+            encoding: "utf8".to_string(),
+            content: String::new(),
+        };
+        let base64_file = SnapshotFile {
+            encoding: "base64".to_string(),
+            ..utf8_file.clone()
+        };
+        let steps = vec![
+            command_step(),
+            ReplayStep::File(ReplayInputFile {
+                path: "/home/sandbox/x".to_string(),
+                encoding: "utf8".to_string(),
+                content: String::new(),
+            }),
+            ReplayStep::SkillMount(ReplaySkillMount {
+                skill_name: "s".to_string(),
+                files: vec![utf8_file, base64_file],
+            }),
+        ];
+        // command(1) + file(2) + mount(utf8 1 + base64 2 + chown 1 = 4)
+        assert_eq!(replay_fs_layers(&steps), 7);
+    }
+
+    #[test]
+    fn check_replay_layer_budget_passes_at_the_limit() {
+        let steps = vec![command_step(); MAX_REPLAY_FS_LAYERS];
+        assert_eq!(replay_fs_layers(&steps), MAX_REPLAY_FS_LAYERS);
+        assert!(check_replay_layer_budget(&steps).is_ok());
+    }
+
+    #[test]
+    fn check_replay_layer_budget_rejects_above_the_limit() {
+        let steps = vec![command_step(); MAX_REPLAY_FS_LAYERS + 1];
+        match check_replay_layer_budget(&steps) {
+            Err(err @ SandboxError::HistoryLimitReached { .. }) => {
+                assert_eq!(err.code(), "ARCHESTRA_SANDBOX_HISTORY_LIMIT");
+                let message = err.to_string();
+                // the actual over-budget count is reported for diagnosis.
+                assert!(message.contains(&(MAX_REPLAY_FS_LAYERS + 1).to_string()));
+                assert!(message.contains(&MAX_REPLAY_FS_LAYERS.to_string()));
+            }
+            other => panic!("expected HistoryLimitReached, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn from_sdk_relabels_the_overlay_mount_overflow_as_a_history_limit() {
+        // the memo's verbatim kernel failure: the replay chain's lowerdir string
+        // outgrew the page limit and mount(2) rejected the rootfs overlay.
+        let err = domain_error(
+            "mount rootfs: mount source: \"overlay\", target: \"/tmp/rootfs1234567\", \
+             fstype: overlay, flags: 0, data: \"...lowerdir=6946/fs:6940/fs:...\", \
+             err: no such file or directory",
+            None,
+        );
+        let mapped = from_sdk(err);
+        assert_eq!(mapped.code(), "ARCHESTRA_SANDBOX_HISTORY_LIMIT");
+    }
+
+    #[test]
+    fn from_sdk_keeps_unrelated_domain_errors_as_engine_unreachable() {
+        // a domain error that isn't the overlay rootfs mount must not be relabeled.
+        let err = domain_error("some other engine domain failure", None);
+        assert!(matches!(
+            from_sdk(err),
+            SandboxError::EngineUnreachable { .. }
+        ));
+    }
+
+    #[test]
+    fn from_sdk_does_not_relabel_a_generic_overlay_mount_failure() {
+        // a rootfs overlay mount that fails for a reason other than the oversized
+        // lowerdir (no ENOENT / no lowerdir data) is a different, possibly
+        // retryable failure and must stay engine-unreachable, not history-limit.
+        let err = domain_error(
+            "mount rootfs: mount source: \"overlay\", target: \"/tmp/rootfs9\", \
+             fstype: overlay, err: operation not permitted",
+            None,
+        );
+        assert!(matches!(
+            from_sdk(err),
+            SandboxError::EngineUnreachable { .. }
+        ));
+    }
+
+    #[test]
+    fn from_sdk_still_classifies_stale_attachables_after_the_overlay_check() {
+        let err = domain_error(
+            "waiting for client session attachables: context deadline exceeded",
+            None,
+        );
+        assert!(matches!(
+            from_sdk(err),
+            SandboxError::EngineUnreachable {
+                fault: EngineFault::StaleAttachables,
+                ..
+            }
+        ));
     }
 }

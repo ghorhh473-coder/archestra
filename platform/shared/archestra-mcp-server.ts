@@ -1,3 +1,4 @@
+// This file contains Enterprise regions licensed under LICENSE_ENTERPRISE.
 import { DEFAULT_APP_NAME, MCP_SERVER_TOOL_NAME_SEPARATOR } from "./consts";
 import { slugify } from "./utils";
 
@@ -106,6 +107,9 @@ export const TOOL_TODO_WRITE_SHORT_NAME = "todo_write";
 export const TOOL_SWAP_AGENT_SHORT_NAME = "swap_agent";
 export const TOOL_SWAP_TO_DEFAULT_AGENT_SHORT_NAME = "swap_to_default_agent";
 export const TOOL_ARTIFACT_WRITE_SHORT_NAME = "artifact_write";
+// Turn the current chat into a project (moves the chat + its files into a new project).
+export const TOOL_CREATE_PROJECT_FROM_CONVERSATION_SHORT_NAME =
+  "create_project_from_conversation";
 export const TOOL_SEARCH_TOOLS_SHORT_NAME = "search_tools";
 export const TOOL_RUN_TOOL_SHORT_NAME = "run_tool";
 export const TOOL_LIST_SKILLS_SHORT_NAME = "list_skills";
@@ -117,7 +121,7 @@ export const TOOL_UPDATE_SKILL_SHORT_NAME = "update_skill";
 export const TOOL_RUN_COMMAND_SHORT_NAME = "run_command";
 export const TOOL_DOWNLOAD_FILE_SHORT_NAME = "download_file";
 export const TOOL_UPLOAD_FILE_SHORT_NAME = "upload_file";
-// persistent file system (My Files): files agents produced, across conversations
+// persistent files: produced by agents, scoped to a conversation (or a project)
 export const TOOL_SEARCH_FILES_SHORT_NAME = "search_files";
 export const TOOL_READ_FILE_SHORT_NAME = "read_file";
 export const TOOL_SAVE_RESULT_SHORT_NAME = "save_result";
@@ -130,6 +134,7 @@ export const TOOL_LIST_APPS_SHORT_NAME = "list_apps";
 export const TOOL_RENDER_APP_SHORT_NAME = "render_app";
 export const TOOL_READ_APP_SHORT_NAME = "read_app";
 export const TOOL_EDIT_APP_SHORT_NAME = "edit_app";
+export const TOOL_SET_APP_TOOLS_SHORT_NAME = "set_app_tools";
 export const TOOL_VALIDATE_APP_SHORT_NAME = "validate_app";
 export const TOOL_PUBLISH_APP_SHORT_NAME = "publish_app";
 export const TOOL_DELETE_APP_SHORT_NAME = "delete_app";
@@ -203,6 +208,7 @@ export const ARCHESTRA_TOOL_SHORT_NAMES = [
   TOOL_SWAP_AGENT_SHORT_NAME,
   TOOL_SWAP_TO_DEFAULT_AGENT_SHORT_NAME,
   TOOL_ARTIFACT_WRITE_SHORT_NAME,
+  TOOL_CREATE_PROJECT_FROM_CONVERSATION_SHORT_NAME,
   TOOL_SEARCH_TOOLS_SHORT_NAME,
   TOOL_RUN_TOOL_SHORT_NAME,
   TOOL_LIST_SKILLS_SHORT_NAME,
@@ -223,6 +229,7 @@ export const ARCHESTRA_TOOL_SHORT_NAMES = [
   TOOL_RENDER_APP_SHORT_NAME,
   TOOL_READ_APP_SHORT_NAME,
   TOOL_EDIT_APP_SHORT_NAME,
+  TOOL_SET_APP_TOOLS_SHORT_NAME,
   TOOL_VALIDATE_APP_SHORT_NAME,
   TOOL_PUBLISH_APP_SHORT_NAME,
   TOOL_DELETE_APP_SHORT_NAME,
@@ -411,7 +418,7 @@ export const DEFAULT_ARCHESTRA_TOOL_SHORT_NAMES = [
 
 /**
  * Agent Skill tools — only assigned to agents once an org admin opts in via
- * the "Enable and create a new skill" empty-state action on /agents/skills
+ * the "Enable and create a new skill" empty-state action on /skills
  * (sets `organization.skillToolsEnabled`).
  */
 export const SKILL_ARCHESTRA_TOOL_SHORT_NAMES = [
@@ -432,6 +439,7 @@ export const APP_ARCHESTRA_TOOL_SHORT_NAMES = [
   TOOL_SCAFFOLD_APP_SHORT_NAME,
   TOOL_REFINE_APP_SHORT_NAME,
   TOOL_EDIT_APP_SHORT_NAME,
+  TOOL_SET_APP_TOOLS_SHORT_NAME,
   TOOL_VALIDATE_APP_SHORT_NAME,
   TOOL_PUBLISH_APP_SHORT_NAME,
   TOOL_READ_APP_SHORT_NAME,
@@ -443,21 +451,41 @@ export const APP_ARCHESTRA_TOOL_SHORT_NAMES = [
 ] as const satisfies readonly ArchestraToolShortName[];
 
 /**
- * Code-execution sandbox tools. Gated by `sandbox:execute` and only seeded when
- * the sandbox feature is on; unlike other built-ins they participate in the
- * `search_tools`/`run_tool` dynamic tool access relaxation (see
- * `dynamic-tools.ts`) so a user with `sandbox:execute` can reach them without
- * a manual assignment.
+ * Code-execution runtime tools. Gated by `sandbox:execute` and only seeded when
+ * the skills-sandbox runtime is on (`config.skillsSandbox.enabled`). They
+ * materialize a Dagger container, so they genuinely need the runtime, and they
+ * participate in the `search_tools`/`run_tool` dynamic tool access relaxation
+ * (see `dynamic-tools.ts`) so a user with `sandbox:execute` can reach them
+ * without a manual assignment.
  */
-const SANDBOX_ARCHESTRA_TOOL_SHORT_NAMES = [
+export const SANDBOX_RUNTIME_ARCHESTRA_TOOL_SHORT_NAMES = [
   TOOL_RUN_COMMAND_SHORT_NAME,
   TOOL_DOWNLOAD_FILE_SHORT_NAME,
   TOOL_UPLOAD_FILE_SHORT_NAME,
+] as const satisfies readonly ArchestraToolShortName[];
+
+/**
+ * Persistent-files ("My Files" / Projects) tools. Also gated by `sandbox:execute`,
+ * but they operate purely on persistent file storage and never touch the Dagger
+ * runtime — so their exposure and dynamic-access participation are driven by the
+ * Projects feature flag (`config.projects.enabled`), not the runtime flag (see
+ * `dynamic-tools.ts` and the backend `index.ts` registration gate).
+ */
+export const PROJECTS_FILE_ARCHESTRA_TOOL_SHORT_NAMES = [
   TOOL_SEARCH_FILES_SHORT_NAME,
   TOOL_READ_FILE_SHORT_NAME,
   TOOL_SAVE_RESULT_SHORT_NAME,
   TOOL_EDIT_FILE_SHORT_NAME,
   TOOL_DELETE_FILE_SHORT_NAME,
+] as const satisfies readonly ArchestraToolShortName[];
+
+/**
+ * The full sandbox tool group (runtime + persistent-files). All share the
+ * `sandbox:execute` RBAC permission and require the runtime to execute.
+ */
+const SANDBOX_ARCHESTRA_TOOL_SHORT_NAMES = [
+  ...SANDBOX_RUNTIME_ARCHESTRA_TOOL_SHORT_NAMES,
+  ...PROJECTS_FILE_ARCHESTRA_TOOL_SHORT_NAMES,
 ] as const satisfies readonly ArchestraToolShortName[];
 
 const SANDBOX_ARCHESTRA_TOOL_SHORT_NAME_SET: ReadonlySet<string> = new Set(
@@ -466,6 +494,15 @@ const SANDBOX_ARCHESTRA_TOOL_SHORT_NAME_SET: ReadonlySet<string> = new Set(
 
 export function isSandboxArchestraToolShortName(shortName: string): boolean {
   return SANDBOX_ARCHESTRA_TOOL_SHORT_NAME_SET.has(shortName);
+}
+
+const PROJECTS_FILE_ARCHESTRA_TOOL_SHORT_NAME_SET: ReadonlySet<string> =
+  new Set(PROJECTS_FILE_ARCHESTRA_TOOL_SHORT_NAMES);
+
+export function isProjectsFileArchestraToolShortName(
+  shortName: string,
+): boolean {
+  return PROJECTS_FILE_ARCHESTRA_TOOL_SHORT_NAME_SET.has(shortName);
 }
 
 /**
@@ -478,18 +515,19 @@ export function isSandboxArchestraToolShortName(shortName: string): boolean {
  * writing code in the reply — the model won't search for a capability it
  * doesn't know exists, so the scaffold/read/edit/render authoring surface stays
  * top-level. delete_app stays behind search (destructive, never
- * intent-time-critical); preview_app_tool and get_app_diagnostics likewise —
- * they are follow-up steps the scaffold/edit tool descriptions name explicitly,
- * so the model reaches them via run_tool once it is already building.
+ * intent-time-critical); preview_app_tool, get_app_diagnostics, and
+ * set_app_tools likewise — they are follow-up steps the scaffold/edit tool
+ * descriptions and the authoring guidance name explicitly, so the model reaches
+ * them via run_tool once it is already building.
  */
 export const ALWAYS_EXPOSED_ARCHESTRA_TOOL_SHORT_NAMES = [
   TOOL_LIST_SKILLS_SHORT_NAME,
   TOOL_LOAD_SKILL_SHORT_NAME,
-  // delete_file is destructive and never intent-time-critical, so — like
-  // delete_app — it stays behind search_tools/run_tool rather than top-level.
-  ...SANDBOX_ARCHESTRA_TOOL_SHORT_NAMES.filter(
-    (name) => name !== TOOL_DELETE_FILE_SHORT_NAME,
-  ),
+  // The full sandbox + persistent-files surface stays top-level. delete_file is
+  // included too (unlike delete_app, which stays behind search/run): deleting a
+  // persistent file is part of the everyday file-management flow, not a rare
+  // destructive escape hatch.
+  ...SANDBOX_ARCHESTRA_TOOL_SHORT_NAMES,
   TOOL_SCAFFOLD_APP_SHORT_NAME,
   TOOL_REFINE_APP_SHORT_NAME,
   TOOL_EDIT_APP_SHORT_NAME,
@@ -515,9 +553,12 @@ export function isAlwaysExposedArchestraToolShortName(
  * these, so their results must keep `structuredContent` through the chat
  * serialization path. `list_apps`/`delete_app`/`read_app` deliberately excluded
  * — they render nothing (`read_app` returns source, not a new head to show).
+ *
+ * `scaffold_app` is excluded too: it only seeds the boilerplate starter
+ * template, which is noise inline — the first `edit_app` (the first real build)
+ * is the earliest render worth showing.
  */
 export const APP_RENDERING_ARCHESTRA_TOOL_SHORT_NAMES = [
-  TOOL_SCAFFOLD_APP_SHORT_NAME,
   TOOL_EDIT_APP_SHORT_NAME,
   TOOL_RENDER_APP_SHORT_NAME,
 ] as const satisfies readonly ArchestraToolShortName[];
@@ -587,17 +628,24 @@ function isArchestraToolShortName(
 export function getArchestraMcpCatalogName(
   options?: ArchestraMcpIdentityOptions,
 ): string {
+  // SPDX-SnippetBegin
+  // SPDX-SnippetCopyrightText: 2026 Archestra Inc.
+  // SPDX-License-Identifier: LicenseRef-Archestra-Enterprise
   if (!options?.fullWhiteLabeling) {
     return DEFAULT_APP_NAME;
   }
 
   const trimmedAppName = options.appName?.trim();
   return trimmedAppName || DEFAULT_APP_NAME;
+  // SPDX-SnippetEnd
 }
 
 export function getArchestraMcpServerName(
   options?: ArchestraMcpIdentityOptions,
 ): string {
+  // SPDX-SnippetBegin
+  // SPDX-SnippetCopyrightText: 2026 Archestra Inc.
+  // SPDX-License-Identifier: LicenseRef-Archestra-Enterprise
   if (!options?.fullWhiteLabeling) {
     return ARCHESTRA_MCP_SERVER_NAME;
   }
@@ -605,6 +653,7 @@ export function getArchestraMcpServerName(
   const catalogName = getArchestraMcpCatalogName(options);
   const brandedServerName = slugify(catalogName);
   return brandedServerName || ARCHESTRA_MCP_SERVER_NAME;
+  // SPDX-SnippetEnd
 }
 
 export function getArchestraToolPrefix(
