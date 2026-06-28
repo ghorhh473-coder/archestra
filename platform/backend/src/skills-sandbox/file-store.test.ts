@@ -1,6 +1,8 @@
 import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { PROJECT_INSTRUCTIONS_FILENAME } from "@archestra/shared";
+import type { S3Client } from "@aws-sdk/client-s3";
 import { afterEach, beforeEach } from "vitest";
 import config from "@/config";
 import { ProjectModel } from "@/models";
@@ -8,7 +10,9 @@ import ConversationModel from "@/models/conversation";
 import FileModel, { FileNameExistsError } from "@/models/file";
 import { projectService } from "@/services/project";
 import { describe, expect, test } from "@/test";
-import { fileStore } from "./file-store";
+import { FakeS3Client } from "@/test/fake-s3-client";
+import { __setS3ClientForTests } from "./file-storage";
+import { FileNotDeletableError, fileStore } from "./file-store";
 
 async function seed(params: {
   organizationId: string;
@@ -1045,5 +1049,253 @@ describe("fileStore disk overlay (filesystem provider)", () => {
     } finally {
       await fs.rm(outside, { recursive: true, force: true });
     }
+  });
+
+  test("the instructions file cannot be deleted via an obj_ ref to its bytes", async ({
+    makeUser,
+    makeOrganization,
+  }) => {
+    const org = await makeOrganization();
+    const user = await makeUser();
+    const project = await ProjectModel.create({
+      organizationId: org.id,
+      userId: user.id,
+      name: "instr-obj",
+      description: null,
+    });
+    await fileStore.writeProjectInstructions({
+      organizationId: org.id,
+      userId: user.id,
+      projectId: project.id,
+      content: "keep me",
+    });
+    const row = await FileModel.findByProjectAndName({
+      organizationId: org.id,
+      projectId: project.id,
+      filename: PROJECT_INSTRUCTIONS_FILENAME,
+    });
+    expect(row?.objectKey).toBeTruthy();
+
+    // A crafted obj_ ref addressing the instructions bytes directly must be
+    // refused too — otherwise it would orphan the row (bytes gone, unreadable).
+    const ref = `obj_${Buffer.from(
+      JSON.stringify({
+        s: { kind: "project", projectId: project.id },
+        k: row?.objectKey,
+      }),
+      "utf8",
+    ).toString("base64url")}`;
+    await expect(
+      fileStore.delete({ ref, organizationId: org.id, userId: user.id }),
+    ).rejects.toBeInstanceOf(FileNotDeletableError);
+
+    // bytes + row still intact
+    expect(
+      await fileStore.readProjectInstructions({
+        organizationId: org.id,
+        projectId: project.id,
+      }),
+    ).toBe("keep me");
+  });
+});
+
+describe("fileStore s3 overlay (s3 provider)", () => {
+  let fake: FakeS3Client;
+  let savedProvider: typeof config.fileStorage.provider;
+  let savedS3: typeof config.fileStorage.s3;
+
+  beforeEach(() => {
+    fake = new FakeS3Client();
+    savedProvider = config.fileStorage.provider;
+    savedS3 = config.fileStorage.s3;
+    config.fileStorage.provider = "s3";
+    config.fileStorage.s3 = {
+      bucket: "test-bucket",
+      region: "us-east-1",
+      endpoint: undefined,
+      forcePathStyle: false,
+      accessKeyId: undefined,
+      secretAccessKey: undefined,
+      keyPrefix: "",
+    };
+    __setS3ClientForTests(fake as unknown as S3Client);
+  });
+  afterEach(() => {
+    config.fileStorage.provider = savedProvider;
+    config.fileStorage.s3 = savedS3;
+    __setS3ClientForTests(null);
+  });
+
+  test("put stamps storageProvider=s3 + objectKey and get reads the bytes back", async ({
+    makeUser,
+    makeOrganization,
+    makeAgent,
+  }) => {
+    const org = await makeOrganization();
+    const user = await makeUser();
+    const conv = await newConversation({ org, user, makeAgent });
+    const file = await seed({
+      organizationId: org.id,
+      userId: user.id,
+      conversationId: conv,
+      filename: "note.txt",
+      data: Buffer.from("hello s3"),
+    });
+    expect(file.storageProvider).toBe("s3");
+    expect(file.objectKey).toBe(`${user.email}/${conv}/note.txt`);
+    expect(file.data).toBeNull();
+
+    const got = await fileStore.get({
+      ref: file.id,
+      organizationId: org.id,
+      userId: user.id,
+    });
+    expect(got?.data.toString()).toBe("hello s3");
+  });
+
+  test("search surfaces a file hand-dropped into the project's S3 folder", async ({
+    makeUser,
+    makeOrganization,
+  }) => {
+    const org = await makeOrganization();
+    const user = await makeUser();
+    const project = await projectService.create({
+      organizationId: org.id,
+      userId: user.id,
+      name: "Acme Reports",
+      description: null,
+    });
+    // Drop bytes straight into the bucket at <slug>/report.csv (no files row).
+    fake.putRaw(`${project.slug}/report.csv`, "a,b,c");
+
+    const items = await fileStore.search({
+      organizationId: org.id,
+      userId: user.id,
+      scope: {
+        kind: "project",
+        projectId: project.id,
+        projectName: project.name,
+      },
+    });
+    const dropped = items.find((i) => i.filename === "report.csv");
+    expect(dropped).toBeDefined();
+    expect(dropped?.id).toBeNull(); // untracked — no row
+    expect(dropped?.downloadRef.startsWith("obj_")).toBe(true);
+  });
+});
+
+describe("fileStore project instructions", () => {
+  async function makeProject(org: { id: string }, user: { id: string }) {
+    return ProjectModel.create({
+      organizationId: org.id,
+      userId: user.id,
+      name: "proj",
+      description: null,
+    });
+  }
+
+  test("read returns null until the file is written", async ({
+    makeUser,
+    makeOrganization,
+  }) => {
+    const org = await makeOrganization();
+    const user = await makeUser();
+    const project = await makeProject(org, user);
+    expect(
+      await fileStore.readProjectInstructions({
+        organizationId: org.id,
+        projectId: project.id,
+      }),
+    ).toBeNull();
+  });
+
+  test("write creates the file, then upserts it (empty is kept)", async ({
+    makeUser,
+    makeOrganization,
+  }) => {
+    const org = await makeOrganization();
+    const user = await makeUser();
+    const project = await makeProject(org, user);
+    const read = () =>
+      fileStore.readProjectInstructions({
+        organizationId: org.id,
+        projectId: project.id,
+      });
+
+    await fileStore.writeProjectInstructions({
+      organizationId: org.id,
+      userId: user.id,
+      projectId: project.id,
+      content: "# Rules\nBe concise.",
+    });
+    expect(await read()).toBe("# Rules\nBe concise.");
+
+    await fileStore.writeProjectInstructions({
+      organizationId: org.id,
+      userId: user.id,
+      projectId: project.id,
+      content: "updated",
+    });
+    expect(await read()).toBe("updated");
+
+    // Emptying keeps an empty real file (read is "", not null).
+    await fileStore.writeProjectInstructions({
+      organizationId: org.id,
+      userId: user.id,
+      projectId: project.id,
+      content: "",
+    });
+    expect(await read()).toBe("");
+  });
+
+  test("the instructions file cannot be deleted", async ({
+    makeUser,
+    makeOrganization,
+  }) => {
+    const org = await makeOrganization();
+    const user = await makeUser();
+    const project = await makeProject(org, user);
+    await fileStore.writeProjectInstructions({
+      organizationId: org.id,
+      userId: user.id,
+      projectId: project.id,
+      content: "hi",
+    });
+    const row = await FileModel.findByProjectAndName({
+      organizationId: org.id,
+      projectId: project.id,
+      filename: PROJECT_INSTRUCTIONS_FILENAME,
+    });
+    expect(row).not.toBeNull();
+    await expect(
+      fileStore.delete({
+        ref: row?.id ?? "",
+        organizationId: org.id,
+        userId: user.id,
+      }),
+    ).rejects.toBeInstanceOf(FileNotDeletableError);
+  });
+
+  test("the instructions file IS listed like any other project file", async ({
+    makeUser,
+    makeOrganization,
+  }) => {
+    const org = await makeOrganization();
+    const user = await makeUser();
+    const project = await makeProject(org, user);
+    await fileStore.writeProjectInstructions({
+      organizationId: org.id,
+      userId: user.id,
+      projectId: project.id,
+      content: "hi",
+    });
+    const listed = await fileStore.search({
+      organizationId: org.id,
+      userId: user.id,
+      scope: { kind: "project", projectId: project.id, projectName: "proj" },
+    });
+    expect(listed.map((f) => f.filename)).toContain(
+      PROJECT_INSTRUCTIONS_FILENAME,
+    );
   });
 });

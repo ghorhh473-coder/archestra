@@ -6,6 +6,7 @@ import {
   CONTEXT_WINDOW_BREAKDOWN_EVENT,
   type ContextWindowBreakdown,
   isModelSelectionComplete,
+  PROJECT_INSTRUCTIONS_MAX_LENGTH,
   RouteId,
   type SupportedProvider,
   TimeInMs,
@@ -87,6 +88,7 @@ import {
   activeChatRunService,
 } from "@/services/active-chat-run";
 import { conversationFilesService } from "@/services/conversation-files";
+import { projectService } from "@/services/project";
 import { fileStore } from "@/skills-sandbox/file-store";
 import { renderSystemPrompt } from "@/templating";
 import {
@@ -231,6 +233,13 @@ function buildStreamErrorPayload(params: {
 
   return serialized;
 }
+
+// Upper bound on how long the response body's close waits for the active-run row
+// to be marked terminal. Terminalization is normally tens of milliseconds; this
+// cap keeps a wedged DB or notifier after stream-end from hanging the client EOF
+// indefinitely. Past it we release EOF and fall back to the pre-existing 409
+// window (which the stale reaper still cleans up).
+const TERMINAL_CLOSE_GATE_TIMEOUT_MS = 10_000;
 
 const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
   fastify.post(
@@ -459,6 +468,40 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
           abortSignal: chatAbortController.signal,
         });
 
+        // A project chat prepends the project's instructions to the system
+        // prompt. Kicked off as a promise so it runs concurrently with the org
+        // reads below rather than adding a serial read on the hot path.
+        // Best-effort: a read failure (or lost project access) must never break
+        // the chat, and an empty file injects nothing. The injected length is
+        // clamped: the editor caps saves at the same limit, but the file is
+        // also writable by the agent tools (bounded only by the much larger
+        // artifact byte limit), and this content goes into every turn's prompt.
+        const projectInstructionsPromise: Promise<string | undefined> =
+          conversation.projectId
+            ? projectService
+                .getInstructions({
+                  id: conversation.projectId,
+                  organizationId,
+                  userId: user.id,
+                })
+                .then(({ content }) =>
+                  content.trim()
+                    ? content.slice(0, PROJECT_INSTRUCTIONS_MAX_LENGTH)
+                    : undefined,
+                )
+                .catch((error) => {
+                  logger.warn(
+                    {
+                      error,
+                      conversationId,
+                      projectId: conversation.projectId,
+                    },
+                    "Failed to load project instructions, proceeding without them",
+                  );
+                  return undefined;
+                })
+            : Promise.resolve(undefined);
+
         // Tools + system prompt, alongside the org settings the stream needs.
         const [
           {
@@ -471,17 +514,20 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
           slimChatErrorUi,
           organization,
         ] = await Promise.all([
-          buildChatContext({
-            conversationId,
-            agentId,
-            agent,
-            user: { id: user.id, email: user.email, name: user.name },
-            organizationId,
-            hookSessionContext,
-            hookRunCollector,
-            elicitation: chatMcpElicitation,
-            abortSignal: chatAbortController.signal,
-          }),
+          projectInstructionsPromise.then((projectInstructions) =>
+            buildChatContext({
+              conversationId,
+              agentId,
+              agent,
+              user: { id: user.id, email: user.email, name: user.name },
+              organizationId,
+              hookSessionContext,
+              projectInstructions,
+              hookRunCollector,
+              elicitation: chatMcpElicitation,
+              abortSignal: chatAbortController.signal,
+            }),
+          ),
           OrganizationModel.getSlimChatErrorUi(organizationId),
           OrganizationModel.getById(organizationId),
         ]);
@@ -654,18 +700,19 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
                 // (the inline connect card) rather than a generic server error.
                 // Pass agent's llmApiKeyId so it's used without a user access
                 // check; pass conversationId as sessionId to group the session.
-                const { model } = await createLLMModelForAgent({
-                  organizationId,
-                  userId: user.id,
-                  agentId,
-                  model: selectedModel,
-                  provider,
-                  conversationId,
-                  externalAgentId,
-                  sessionId: conversationId,
-                  source: "chat",
-                  agentLlmApiKeyId: agent.llmApiKeyId,
-                });
+                const { model, anthropicNativeEndpoint } =
+                  await createLLMModelForAgent({
+                    organizationId,
+                    userId: user.id,
+                    agentId,
+                    model: selectedModel,
+                    provider,
+                    conversationId,
+                    externalAgentId,
+                    sessionId: conversationId,
+                    source: "chat",
+                    agentLlmApiKeyId: agent.llmApiKeyId,
+                  });
 
                 // Send heartbeat every 5s to prevent connection drops
                 // during long-running tool executions / subagent calls.
@@ -760,6 +807,7 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
                   systemPrompt,
                   abortSignal: chatAbortController.signal,
                   emit: (event) => writer.write(event),
+                  anthropicNativeEndpoint,
                 });
 
                 // Per-category breakdown of the assembled request, powering
@@ -1191,7 +1239,7 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
             });
 
             const [responseStream, persistenceStream] = uiMessageStream.tee();
-            activeChatRunService.drainStreamToEvents({
+            const { terminalReady } = activeChatRunService.drainStreamToEvents({
               runId: activeRun.id,
               conversationId,
               stream: persistenceStream as ReadableStream<UIMessageChunk>,
@@ -1237,12 +1285,40 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
               reply.header(key, value);
             }
 
-            // Send the Response body stream directly
+            // Send the Response body stream directly, but hold its CLOSE (not
+            // its bytes — they stream through unchanged) until the active-run row
+            // is marked terminal. Without this, a client that fires its next
+            // message the instant this response ends races the async drain and
+            // 409s against a row still flagged running.
             if (!response.body) {
               throw new ApiError(400, "No response body");
             }
+            const gatedBody = (
+              response.body as ReadableStream<Uint8Array>
+            ).pipeThrough(
+              new TransformStream<Uint8Array, Uint8Array>({
+                async flush() {
+                  let timer: ReturnType<typeof setTimeout> | undefined;
+                  try {
+                    await Promise.race([
+                      terminalReady,
+                      new Promise<void>((resolve) => {
+                        timer = setTimeout(
+                          resolve,
+                          TERMINAL_CLOSE_GATE_TIMEOUT_MS,
+                        );
+                      }),
+                    ]);
+                  } finally {
+                    if (timer) {
+                      clearTimeout(timer);
+                    }
+                  }
+                },
+              }),
+            );
             // biome-ignore lint/suspicious/noExplicitAny: Fastify reply.send accepts ReadableStream but TypeScript requires explicit cast
-            return reply.send(response.body as any);
+            return reply.send(gatedBody as any);
           },
         });
       } catch (error) {
@@ -1604,6 +1680,29 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
     },
   );
 
+  fastify.delete(
+    "/api/chat/attachments/:id",
+    {
+      schema: {
+        operationId: RouteId.DeleteChatAttachment,
+        description:
+          "Soft-delete a chat attachment by id. Owner-gated: only the " +
+          "conversation owner may remove its attachments.",
+        tags: ["Chat"],
+        params: z.object({ id: UuidIdSchema }),
+        response: constructResponseSchema(z.object({ ok: z.literal(true) })),
+      },
+    },
+    async ({ params: { id }, user, organizationId }) => {
+      await conversationFilesService.deleteAttachment({
+        attachmentId: id,
+        userId: user.id,
+        organizationId,
+      });
+      return { ok: true as const };
+    },
+  );
+
   fastify.post(
     "/api/chat/conversations/:id/fork",
     {
@@ -1754,8 +1853,13 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
         organizationId,
       });
 
-      // Validate that the agent exists and user has access to it
-      const agent = await AgentModel.findById(agentId, user.id, isAgentAdmin);
+      // Validate that the agent exists and the user has access to it. Only the
+      // LLM-selection fields are read below, so skip findById's full hydration.
+      const agent = await AgentModel.findLlmSelectionFieldsById(
+        agentId,
+        user.id,
+        isAgentAdmin,
+      );
 
       if (!agent) {
         throw new ApiError(404, "Agent not found");
@@ -1991,6 +2095,35 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
           );
         }
       }
+
+      return reply.send({ success: true });
+    },
+  );
+
+  fastify.delete(
+    "/api/chat/conversations/:id/chat-errors",
+    {
+      schema: {
+        operationId: RouteId.ClearChatConversationErrors,
+        description: "Clear a conversation's recorded chat errors",
+        tags: ["Chat"],
+        params: z.object({ id: UuidIdSchema }),
+        response: constructResponseSchema(DeleteObjectResponseSchema),
+      },
+    },
+    async ({ params: { id }, user, organizationId }, reply) => {
+      // Owner+org-scoped lookup (matches the other conversation mutations) so a
+      // caller can only clear errors on a conversation they own.
+      const conversation = await ConversationModel.findById({
+        id,
+        userId: user.id,
+        organizationId,
+      });
+      if (!conversation) {
+        throw new ApiError(404, "Conversation not found");
+      }
+
+      await ConversationChatErrorModel.deleteByConversation(id);
 
       return reply.send({ success: true });
     },
@@ -2383,10 +2516,17 @@ const chatRoutes: FastifyPluginAsyncZod = async (fastify) => {
       );
 
       if (isApiKeyRequired(titleLlm.provider, titleLlm.apiKey)) {
-        throw new ApiError(
-          400,
-          "LLM Provider API key not configured. Please configure it in Provider Settings.",
+        // Title generation is best-effort. When the resolved model has no usable
+        // key for the acting user — e.g. a per-user provider (GitHub Copilot)
+        // they haven't connected, which can be inherited from an org/agent
+        // default — skip silently instead of failing the request with a generic
+        // "configure a key" error. The chat stream already surfaces the inline
+        // connect prompt; a redundant toast here would only mislead the member.
+        logger.info(
+          { conversationId: id, provider: titleLlm.provider },
+          "Skipping title generation - no usable API key for the acting user",
         );
+        return reply.send(conversation);
       }
 
       // Generate title using the extracted function
@@ -3367,11 +3507,36 @@ async function forkConversation(params: {
     throw new ApiError(404, "Agent not found");
   }
 
+  // A chat started from a (shared) chat in a project belongs to that project,
+  // just like one started from the project composer. Carry the source's
+  // project over to the fork — but only when the forker can still access it.
+  // Conversation shares are independent of project shares, so a conversation
+  // can be shared without its project being shared; in that case drop the link
+  // rather than attaching the fork to a project the user cannot see (which
+  // would leave it invisible and unmanageable to them).
+  let projectId: string | null = null;
+  if (params.sourceConversation.projectId) {
+    const project = await ProjectModel.findById(
+      params.sourceConversation.projectId,
+    );
+    if (
+      project &&
+      (await ProjectShareModel.userCanAccessProject({
+        project,
+        userId: params.userId,
+        organizationId: params.organizationId,
+      }))
+    ) {
+      projectId = project.id;
+    }
+  }
+
   const newConversation = await ConversationModel.create({
     userId: params.userId,
     organizationId: params.organizationId,
     agentId: agent.id,
     modelId: params.sourceConversation.modelId,
+    projectId,
   });
 
   if (params.sourceConversation.messages.length > 0) {

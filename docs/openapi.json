@@ -2,7 +2,7 @@
   "openapi": "3.0.0",
   "info": {
     "title": "Archestra",
-    "version": "1.2.71"
+    "version": "1.2.74"
   },
   "components": {
     "schemas": {
@@ -53577,18 +53577,6 @@
                                 "nullable": true,
                                 "type": "string"
                               },
-                              "scope": {
-                                "type": "string",
-                                "enum": [
-                                  "personal",
-                                  "team",
-                                  "org"
-                                ]
-                              },
-                              "authorId": {
-                                "nullable": true,
-                                "type": "string"
-                              },
                               "executionModel": {
                                 "type": "string",
                                 "enum": [
@@ -53612,6 +53600,18 @@
                               "id": {
                                 "type": "string"
                               },
+                              "scope": {
+                                "type": "string",
+                                "enum": [
+                                  "personal",
+                                  "team",
+                                  "org"
+                                ]
+                              },
+                              "authorId": {
+                                "nullable": true,
+                                "type": "string"
+                              },
                               "latestVersion": {
                                 "type": "integer",
                                 "minimum": -9007199254740991,
@@ -53621,12 +53621,12 @@
                             "required": [
                               "name",
                               "description",
-                              "scope",
-                              "authorId",
                               "executionModel",
                               "cspOrigin",
                               "source",
                               "id",
+                              "scope",
+                              "authorId",
                               "latestVersion"
                             ],
                             "additionalProperties": false
@@ -53638,18 +53638,6 @@
                                 "type": "string"
                               },
                               "description": {
-                                "nullable": true,
-                                "type": "string"
-                              },
-                              "scope": {
-                                "type": "string",
-                                "enum": [
-                                  "personal",
-                                  "team",
-                                  "org"
-                                ]
-                              },
-                              "authorId": {
                                 "nullable": true,
                                 "type": "string"
                               },
@@ -53673,23 +53661,37 @@
                                   "external"
                                 ]
                               },
-                              "mcpServerId": {
+                              "catalogId": {
                                 "type": "string"
                               },
                               "resourceUri": {
                                 "type": "string"
+                              },
+                              "runnable": {
+                                "type": "boolean"
+                              },
+                              "availabilityScopes": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "personal",
+                                    "team",
+                                    "org"
+                                  ]
+                                }
                               }
                             },
                             "required": [
                               "name",
                               "description",
-                              "scope",
-                              "authorId",
                               "executionModel",
                               "cspOrigin",
                               "source",
-                              "mcpServerId",
-                              "resourceUri"
+                              "catalogId",
+                              "resourceUri",
+                              "runnable",
+                              "availabilityScopes"
                             ],
                             "additionalProperties": false
                           }
@@ -54080,14 +54082,6 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "scope": {
-                      "type": "string",
-                      "enum": [
-                        "personal",
-                        "team",
-                        "org"
-                      ]
-                    },
                     "name": {
                       "type": "string"
                     },
@@ -54099,7 +54093,7 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "environmentId": {
+                    "mcpServerId": {
                       "nullable": true,
                       "type": "string",
                       "format": "uuid",
@@ -54158,6 +54152,20 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "personal",
+                        "team",
+                        "org"
+                      ]
+                    },
+                    "environmentId": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
                     "warnings": {
                       "type": "array",
                       "items": {
@@ -54169,16 +54177,17 @@
                     "id",
                     "organizationId",
                     "authorId",
-                    "scope",
                     "name",
                     "description",
                     "templateId",
-                    "environmentId",
+                    "mcpServerId",
                     "spec",
                     "latestVersion",
                     "createdAt",
                     "updatedAt",
-                    "deletedAt"
+                    "deletedAt",
+                    "scope",
+                    "environmentId"
                   ],
                   "additionalProperties": false
                 }
@@ -54422,13 +54431,13 @@
         }
       }
     },
-    "/api/apps/external/{mcpServerId}": {
+    "/api/apps/external/{catalogId}": {
       "get": {
         "operationId": "getExternalApp",
         "tags": [
           "Apps"
         ],
-        "description": "Resolve a single external UI-providing app entry by installed MCP server id (for the standalone run page).\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`app:read`: View and run MCP Apps within your scope (org, your teams, your own)",
+        "description": "Resolve an external UI-providing app by catalog id: its UI resource and the caller's accessible installs (for the standalone run page's install selector).\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`app:read`: View and run MCP Apps within your scope (org, your teams, your own)",
         "parameters": [
           {
             "schema": {
@@ -54437,7 +54446,7 @@
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
             },
             "in": "path",
-            "name": "mcpServerId",
+            "name": "catalogId",
             "required": true
           }
         ],
@@ -54449,6 +54458,9 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "catalogId": {
+                      "type": "string"
+                    },
                     "name": {
                       "type": "string"
                     },
@@ -54456,55 +54468,64 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "scope": {
-                      "type": "string",
-                      "enum": [
-                        "personal",
-                        "team",
-                        "org"
-                      ]
+                    "resourceUri": {
+                      "type": "string"
                     },
-                    "authorId": {
+                    "defaultMcpServerId": {
                       "nullable": true,
                       "type": "string"
                     },
-                    "executionModel": {
-                      "type": "string",
-                      "enum": [
-                        "viewer-scoped",
-                        "server-scoped"
-                      ]
-                    },
-                    "cspOrigin": {
-                      "type": "string",
-                      "enum": [
-                        "platform-pinned",
-                        "author-declared"
-                      ]
-                    },
-                    "source": {
-                      "type": "string",
-                      "enum": [
-                        "external"
-                      ]
-                    },
-                    "mcpServerId": {
-                      "type": "string"
-                    },
-                    "resourceUri": {
-                      "type": "string"
+                    "installs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "mcpServerId": {
+                            "type": "string"
+                          },
+                          "scope": {
+                            "type": "string",
+                            "enum": [
+                              "personal",
+                              "team",
+                              "org"
+                            ]
+                          },
+                          "ownerId": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "teamId": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "localInstallationStatus": {
+                            "nullable": true,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "mcpServerId",
+                          "scope",
+                          "ownerId",
+                          "teamId",
+                          "name",
+                          "localInstallationStatus"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
                   "required": [
+                    "catalogId",
                     "name",
                     "description",
-                    "scope",
-                    "authorId",
-                    "executionModel",
-                    "cspOrigin",
-                    "source",
-                    "mcpServerId",
-                    "resourceUri"
+                    "resourceUri",
+                    "defaultMcpServerId",
+                    "installs"
                   ],
                   "additionalProperties": false
                 }
@@ -55066,14 +55087,6 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "scope": {
-                      "type": "string",
-                      "enum": [
-                        "personal",
-                        "team",
-                        "org"
-                      ]
-                    },
                     "name": {
                       "type": "string"
                     },
@@ -55085,7 +55098,7 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "environmentId": {
+                    "mcpServerId": {
                       "nullable": true,
                       "type": "string",
                       "format": "uuid",
@@ -55143,22 +55156,57 @@
                       "nullable": true,
                       "type": "string",
                       "format": "date-time"
+                    },
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "personal",
+                        "team",
+                        "org"
+                      ]
+                    },
+                    "environmentId": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "teams": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
                   "required": [
                     "id",
                     "organizationId",
                     "authorId",
-                    "scope",
                     "name",
                     "description",
                     "templateId",
-                    "environmentId",
+                    "mcpServerId",
                     "spec",
                     "latestVersion",
                     "createdAt",
                     "updatedAt",
-                    "deletedAt"
+                    "deletedAt",
+                    "scope",
+                    "environmentId",
+                    "teams"
                   ],
                   "additionalProperties": false
                 }
@@ -55509,14 +55557,6 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "scope": {
-                      "type": "string",
-                      "enum": [
-                        "personal",
-                        "team",
-                        "org"
-                      ]
-                    },
                     "name": {
                       "type": "string"
                     },
@@ -55528,7 +55568,7 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "environmentId": {
+                    "mcpServerId": {
                       "nullable": true,
                       "type": "string",
                       "format": "uuid",
@@ -55587,6 +55627,20 @@
                       "type": "string",
                       "format": "date-time"
                     },
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "personal",
+                        "team",
+                        "org"
+                      ]
+                    },
+                    "environmentId": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
                     "warnings": {
                       "type": "array",
                       "items": {
@@ -55598,16 +55652,17 @@
                     "id",
                     "organizationId",
                     "authorId",
-                    "scope",
                     "name",
                     "description",
                     "templateId",
-                    "environmentId",
+                    "mcpServerId",
                     "spec",
                     "latestVersion",
                     "createdAt",
                     "updatedAt",
-                    "deletedAt"
+                    "deletedAt",
+                    "scope",
+                    "environmentId"
                   ],
                   "additionalProperties": false
                 }
@@ -78742,13 +78797,17 @@
                     "projectName": {
                       "nullable": true,
                       "type": "string"
+                    },
+                    "canManageFiles": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
                     "generated",
                     "attachments",
                     "projectFiles",
-                    "projectName"
+                    "projectName",
+                    "canManageFiles"
                   ],
                   "additionalProperties": false
                 }
@@ -79245,6 +79304,285 @@
           "kind": "static",
           "permissions": [
             "chat:read"
+          ]
+        }
+      }
+    },
+    "/api/chat/attachments/{id}": {
+      "delete": {
+        "operationId": "deleteChatAttachment",
+        "tags": [
+          "Chat"
+        ],
+        "description": "Soft-delete a chat attachment by id. Owner-gated: only the conversation owner may remove its attachments.\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`chat:update`: Edit chat messages and conversation settings",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_validation_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authentication_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authorization_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_not_found_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_conflict_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_internal_server_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-required-permissions": {
+          "kind": "static",
+          "permissions": [
+            "chat:update"
           ]
         }
       }
@@ -80283,6 +80621,282 @@
           "kind": "static",
           "permissions": [
             "agent:read"
+          ]
+        }
+      }
+    },
+    "/api/chat/conversations/{id}/chat-errors": {
+      "delete": {
+        "operationId": "clearChatConversationErrors",
+        "tags": [
+          "Chat"
+        ],
+        "description": "Clear a conversation's recorded chat errors\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`chat:update`: Edit chat messages and conversation settings",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_validation_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authentication_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authorization_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_not_found_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_conflict_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_internal_server_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-required-permissions": {
+          "kind": "static",
+          "permissions": [
+            "chat:update"
           ]
         }
       }
@@ -90874,6 +91488,9 @@
                       "nullable": true,
                       "type": "string"
                     },
+                    "enterpriseCoreActive": {
+                      "type": "boolean"
+                    },
                     "analytics": {
                       "type": "object",
                       "properties": {
@@ -90915,6 +91532,7 @@
                     "disableBasicAuth",
                     "disableInvitations",
                     "maintenanceMode",
+                    "enterpriseCoreActive",
                     "analytics"
                   ],
                   "additionalProperties": false
@@ -90965,9 +91583,40 @@
                       ],
                       "additionalProperties": false
                     },
+                    "smallTeamTier": {
+                      "type": "object",
+                      "properties": {
+                        "threshold": {
+                          "type": "number"
+                        },
+                        "userCount": {
+                          "type": "number"
+                        },
+                        "smallTeam": {
+                          "type": "boolean"
+                        },
+                        "envFlag": {
+                          "type": "boolean"
+                        },
+                        "communicate": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "threshold",
+                        "userCount",
+                        "smallTeam",
+                        "envFlag",
+                        "communicate"
+                      ],
+                      "additionalProperties": false
+                    },
                     "features": {
                       "type": "object",
                       "properties": {
+                        "betaEnabled": {
+                          "type": "boolean"
+                        },
                         "orchestratorK8sRuntime": {
                           "type": "boolean"
                         },
@@ -91074,6 +91723,7 @@
                         }
                       },
                       "required": [
+                        "betaEnabled",
                         "orchestratorK8sRuntime",
                         "sandbox",
                         "agentSkillsEnabled",
@@ -91130,6 +91780,7 @@
                   },
                   "required": [
                     "enterpriseFeatures",
+                    "smallTeamTier",
                     "features",
                     "providerBaseUrls"
                   ],
@@ -91223,6 +91874,10 @@
                       "provider-key",
                       "virtual-key"
                     ]
+                  },
+                  "attributePassthrough": {
+                    "default": true,
+                    "type": "boolean"
                   },
                   "skills": {
                     "type": "object",
@@ -91569,6 +92224,293 @@
                 },
                 "required": [
                   "provider"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "name"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_validation_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authentication_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authorization_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_not_found_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_conflict_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_internal_server_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-required-permissions": {
+          "kind": "none",
+          "note": "None (no additional RBAC permission required)",
+          "permissions": []
+        }
+      }
+    },
+    "/api/connection-setups/passthrough-key": {
+      "post": {
+        "operationId": "createConnectionPassthroughKey",
+        "tags": [
+          "Connection Setups"
+        ],
+        "description": "Provision (or reuse) the caller's personal passthrough virtual key scoped to an LLM proxy and return its value once. Backs the manual /connection flow's X-Archestra-Virtual-Key attribution step for Claude Code and Claude Desktop. Requires llmVirtualKey:create.\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\nNone (no additional RBAC permission required)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "llmProxyId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "llmProxyId"
                 ]
               }
             }
@@ -102703,13 +103645,26 @@
                         "connected",
                         "not_checked"
                       ]
+                    },
+                    "sandbox": {
+                      "type": "string",
+                      "enum": [
+                        "ready",
+                        "initializing",
+                        "disabled",
+                        "unreachable"
+                      ]
+                    },
+                    "sandboxReason": {
+                      "type": "string"
                     }
                   },
                   "required": [
                     "name",
                     "status",
                     "version",
-                    "database"
+                    "database",
+                    "sandbox"
                   ],
                   "additionalProperties": false
                 }
@@ -105792,6 +106747,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -105832,6 +106793,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -106231,6 +107193,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -106289,6 +107252,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -106329,6 +107298,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -107145,6 +108115,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -107203,6 +108174,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -107243,6 +108220,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -107756,6 +108734,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -107814,6 +108793,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -107854,6 +108839,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -108253,6 +109239,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -108311,6 +109298,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -108351,6 +109344,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -108750,6 +109744,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -108808,6 +109803,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -108848,6 +109849,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -111070,6 +112072,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -111128,6 +112131,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -111168,6 +112177,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -111567,6 +112577,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -111625,6 +112636,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -111665,6 +112682,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -112064,6 +113082,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -112122,6 +113141,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -112162,6 +113187,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -112561,6 +113587,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -112619,6 +113646,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -112659,6 +113692,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -113058,6 +114092,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -113116,6 +114151,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -113156,6 +114197,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -113555,6 +114597,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -113613,6 +114656,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -113653,6 +114702,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -114052,6 +115102,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -114110,6 +115161,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -114150,6 +115207,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -114538,6 +115596,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -114596,6 +115655,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -114636,6 +115701,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -115024,6 +116090,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -115082,6 +116149,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -115122,6 +116195,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -115521,6 +116595,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -115579,6 +116654,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -115619,6 +116700,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -116018,6 +117100,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -116076,6 +117159,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -116116,6 +117205,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -116515,6 +117605,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -116573,6 +117664,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -116613,6 +117710,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -119178,6 +120276,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -119236,6 +120335,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -119276,6 +120381,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -119675,6 +120781,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -119733,6 +120840,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -119773,6 +120886,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -120405,6 +121519,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -120463,6 +121578,12 @@
                                 "format": "uuid",
                                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                               },
+                              "passthroughVirtualKeyId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
                               "environmentId": {
                                 "nullable": true,
                                 "type": "string",
@@ -120503,6 +121624,7 @@
                                 "enum": [
                                   "provider_key",
                                   "virtual_key",
+                                  "passthrough_virtual_key",
                                   "jwks",
                                   "oauth_client_credentials",
                                   "oauth_user",
@@ -121319,6 +122441,7 @@
                               "executionId",
                               "userId",
                               "virtualKeyId",
+                              "passthroughVirtualKeyId",
                               "environmentId",
                               "sessionId",
                               "sessionSource",
@@ -121690,6 +122813,19 @@
           },
           {
             "schema": {
+              "type": "string",
+              "enum": [
+                "claude_code",
+                "claude_desktop"
+              ]
+            },
+            "in": "query",
+            "name": "sessionSource",
+            "required": false,
+            "description": "Filter by client/session source (e.g. claude_code, claude_desktop)"
+          },
+          {
+            "schema": {
               "type": "string"
             },
             "in": "query",
@@ -121915,6 +123051,7 @@
                               "enum": [
                                 "provider_key",
                                 "virtual_key",
+                                "passthrough_virtual_key",
                                 "jwks",
                                 "oauth_client_credentials",
                                 "oauth_user",
@@ -122872,6 +124009,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -122912,6 +124055,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -123311,6 +124455,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -123369,6 +124514,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -123409,6 +124560,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -124225,6 +125377,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -124283,6 +125436,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -124323,6 +125482,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -124836,6 +125996,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -124894,6 +126055,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -124934,6 +126101,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -125333,6 +126501,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -125391,6 +126560,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -125431,6 +126606,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -125830,6 +127006,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -125888,6 +127065,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -125928,6 +127111,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -128150,6 +129334,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -128208,6 +129393,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -128248,6 +129439,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -128647,6 +129839,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -128705,6 +129898,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -128745,6 +129944,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -129144,6 +130344,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -129202,6 +130403,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -129242,6 +130449,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -129641,6 +130849,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -129699,6 +130908,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -129739,6 +130954,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -130138,6 +131354,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -130196,6 +131413,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -130236,6 +131459,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -130635,6 +131859,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -130693,6 +131918,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -130733,6 +131964,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -131132,6 +132364,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -131190,6 +132423,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -131230,6 +132469,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -131618,6 +132858,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -131676,6 +132917,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -131716,6 +132963,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -132104,6 +133352,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -132162,6 +133411,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -132202,6 +133457,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -132601,6 +133857,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -132659,6 +133916,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -132699,6 +133962,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -133098,6 +134362,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -133156,6 +134421,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -133196,6 +134467,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -133595,6 +134867,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -133653,6 +134926,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -133693,6 +134972,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -136258,6 +137538,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -136316,6 +137597,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -136356,6 +137643,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -136755,6 +138043,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -136813,6 +138102,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -136853,6 +138148,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -137485,6 +138781,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -137543,6 +138840,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
+                        "passthroughVirtualKeyId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
                         "environmentId": {
                           "nullable": true,
                           "type": "string",
@@ -137583,6 +138886,7 @@
                           "enum": [
                             "provider_key",
                             "virtual_key",
+                            "passthrough_virtual_key",
                             "jwks",
                             "oauth_client_credentials",
                             "oauth_user",
@@ -138399,6 +139703,7 @@
                         "executionId",
                         "userId",
                         "virtualKeyId",
+                        "passthroughVirtualKeyId",
                         "environmentId",
                         "sessionId",
                         "sessionSource",
@@ -138674,6 +139979,16 @@
           "MCP Catalog"
         ],
         "description": "Get all Internal MCP catalog items\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`mcpRegistry:read`: Browse the MCP server registry",
+        "parameters": [
+          {
+            "schema": {
+              "type": "boolean"
+            },
+            "in": "query",
+            "name": "includeApps",
+            "required": false
+          }
+        ],
         "responses": {
           "200": {
             "description": "Default Response",
@@ -138756,7 +140071,8 @@
                         "enum": [
                           "local",
                           "remote",
-                          "builtin"
+                          "builtin",
+                          "app"
                         ]
                       },
                       "multitenant": {
@@ -139263,6 +140579,13 @@
                         "type": "integer",
                         "minimum": -9007199254740991,
                         "maximum": 9007199254740991
+                      },
+                      "providesUi": {
+                        "type": "boolean"
+                      },
+                      "appId": {
+                        "nullable": true,
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -139627,7 +140950,8 @@
                     "enum": [
                       "local",
                       "remote",
-                      "builtin"
+                      "builtin",
+                      "app"
                     ]
                   },
                   "multitenant": {
@@ -140184,7 +141508,8 @@
                       "enum": [
                         "local",
                         "remote",
-                        "builtin"
+                        "builtin",
+                        "app"
                       ]
                     },
                     "multitenant": {
@@ -141063,7 +142388,8 @@
                       "enum": [
                         "local",
                         "remote",
-                        "builtin"
+                        "builtin",
+                        "app"
                       ]
                     },
                     "multitenant": {
@@ -141921,7 +143247,8 @@
                     "enum": [
                       "local",
                       "remote",
-                      "builtin"
+                      "builtin",
+                      "app"
                     ]
                   },
                   "dynamicConnectionMcpServerId": {
@@ -142477,7 +143804,8 @@
                       "enum": [
                         "local",
                         "remote",
-                        "builtin"
+                        "builtin",
+                        "app"
                       ]
                     },
                     "multitenant": {
@@ -161802,6 +163130,12 @@
                             "$ref": "#/components/schemas/EmbeddingDimensions"
                           }
                         ]
+                      },
+                      "requiresUserConnection": {
+                        "type": "boolean"
+                      },
+                      "isConnected": {
+                        "type": "boolean"
                       }
                     },
                     "required": [
@@ -175745,7 +177079,8 @@
                         "enum": [
                           "local",
                           "remote",
-                          "builtin"
+                          "builtin",
+                          "app"
                         ]
                       },
                       "secretId": {
@@ -175826,6 +177161,10 @@
                           "refresh_failed",
                           "no_refresh_token"
                         ]
+                      },
+                      "oauthRefreshErrorMessage": {
+                        "nullable": true,
+                        "type": "string"
                       },
                       "oauthRefreshFailedAt": {
                         "nullable": true,
@@ -175924,6 +177263,7 @@
                       "localInstallationStatus",
                       "localInstallationError",
                       "oauthRefreshError",
+                      "oauthRefreshErrorMessage",
                       "oauthRefreshFailedAt",
                       "createdAt",
                       "updatedAt"
@@ -176244,6 +177584,10 @@
                       "no_refresh_token"
                     ]
                   },
+                  "oauthRefreshErrorMessage": {
+                    "nullable": true,
+                    "type": "string"
+                  },
                   "oauthRefreshFailedAt": {
                     "nullable": true
                   },
@@ -176308,7 +177652,8 @@
                       "enum": [
                         "local",
                         "remote",
-                        "builtin"
+                        "builtin",
+                        "app"
                       ]
                     },
                     "secretId": {
@@ -176389,6 +177734,10 @@
                         "refresh_failed",
                         "no_refresh_token"
                       ]
+                    },
+                    "oauthRefreshErrorMessage": {
+                      "nullable": true,
+                      "type": "string"
                     },
                     "oauthRefreshFailedAt": {
                       "nullable": true,
@@ -176487,6 +177836,7 @@
                     "localInstallationStatus",
                     "localInstallationError",
                     "oauthRefreshError",
+                    "oauthRefreshErrorMessage",
                     "oauthRefreshFailedAt",
                     "createdAt",
                     "updatedAt"
@@ -176778,7 +178128,8 @@
                       "enum": [
                         "local",
                         "remote",
-                        "builtin"
+                        "builtin",
+                        "app"
                       ]
                     },
                     "secretId": {
@@ -176859,6 +178210,10 @@
                         "refresh_failed",
                         "no_refresh_token"
                       ]
+                    },
+                    "oauthRefreshErrorMessage": {
+                      "nullable": true,
+                      "type": "string"
                     },
                     "oauthRefreshFailedAt": {
                       "nullable": true,
@@ -176957,6 +178312,7 @@
                     "localInstallationStatus",
                     "localInstallationError",
                     "oauthRefreshError",
+                    "oauthRefreshErrorMessage",
                     "oauthRefreshFailedAt",
                     "createdAt",
                     "updatedAt"
@@ -177557,7 +178913,8 @@
                       "enum": [
                         "local",
                         "remote",
-                        "builtin"
+                        "builtin",
+                        "app"
                       ]
                     },
                     "secretId": {
@@ -177638,6 +178995,10 @@
                         "refresh_failed",
                         "no_refresh_token"
                       ]
+                    },
+                    "oauthRefreshErrorMessage": {
+                      "nullable": true,
+                      "type": "string"
                     },
                     "oauthRefreshFailedAt": {
                       "nullable": true,
@@ -177736,6 +179097,7 @@
                     "localInstallationStatus",
                     "localInstallationError",
                     "oauthRefreshError",
+                    "oauthRefreshErrorMessage",
                     "oauthRefreshFailedAt",
                     "createdAt",
                     "updatedAt"
@@ -178964,7 +180326,8 @@
                       "enum": [
                         "local",
                         "remote",
-                        "builtin"
+                        "builtin",
+                        "app"
                       ]
                     },
                     "secretId": {
@@ -179045,6 +180408,10 @@
                         "refresh_failed",
                         "no_refresh_token"
                       ]
+                    },
+                    "oauthRefreshErrorMessage": {
+                      "nullable": true,
+                      "type": "string"
                     },
                     "oauthRefreshFailedAt": {
                       "nullable": true,
@@ -179143,6 +180510,7 @@
                     "localInstallationStatus",
                     "localInstallationError",
                     "oauthRefreshError",
+                    "oauthRefreshErrorMessage",
                     "oauthRefreshFailedAt",
                     "createdAt",
                     "updatedAt"
@@ -205118,12 +206486,12 @@
                   "name": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 256
+                    "maxLength": 64
                   },
                   "description": {
                     "nullable": true,
                     "type": "string",
-                    "maxLength": 4096
+                    "maxLength": 200
                   },
                   "icon": {
                     "nullable": true,
@@ -205162,8 +206530,17 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "isOwner": {
-                      "type": "boolean"
+                    "viewerRole": {
+                      "type": "string",
+                      "enum": [
+                        "owner",
+                        "shared",
+                        "admin"
+                      ]
+                    },
+                    "ownerName": {
+                      "nullable": true,
+                      "type": "string"
                     },
                     "conversationCount": {
                       "type": "integer",
@@ -205178,6 +206555,18 @@
                         "team"
                       ]
                     },
+                    "shareTeamNames": {
+                      "nullable": true,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "pinnedAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time"
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time"
@@ -205188,9 +206577,12 @@
                     "name",
                     "description",
                     "icon",
-                    "isOwner",
+                    "viewerRole",
+                    "ownerName",
                     "conversationCount",
                     "visibility",
+                    "shareTeamNames",
+                    "pinnedAt",
                     "createdAt"
                   ],
                   "additionalProperties": false
@@ -205439,7 +206831,66 @@
         "tags": [
           "Projects"
         ],
-        "description": "List projects the caller can see: their own plus ones shared with their teams or the whole organization.\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`project:read`: View projects and the chats inside them",
+        "description": "List projects the caller can see. `scope` is the project's share visibility: `personal` (private), `team` (shared with teams — narrow with `teamIds`), or `org` (org-wide); omitted = all visible. Admins additionally filter `personal` by owner via `authorIds` / `excludeAuthorIds` (ignored for non-admins). `search` matches name + description.\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`project:read`: View projects and the chats inside them",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "personal",
+                "team",
+                "org"
+              ]
+            },
+            "in": "query",
+            "name": "scope",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "in": "query",
+            "name": "search",
+            "required": false
+          },
+          {
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "in": "query",
+            "name": "teamIds",
+            "required": false,
+            "description": "Team IDs (comma-separated); only used when scope=team."
+          },
+          {
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "in": "query",
+            "name": "authorIds",
+            "required": false,
+            "description": "Owner user IDs (comma-separated). Admin-only; used with scope=personal."
+          },
+          {
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "in": "query",
+            "name": "excludeAuthorIds",
+            "required": false,
+            "description": "Exclude owner user IDs (comma-separated). Admin-only; used with scope=personal."
+          }
+        ],
         "responses": {
           "200": {
             "description": "Default Response",
@@ -205466,8 +206917,17 @@
                         "nullable": true,
                         "type": "string"
                       },
-                      "isOwner": {
-                        "type": "boolean"
+                      "viewerRole": {
+                        "type": "string",
+                        "enum": [
+                          "owner",
+                          "shared",
+                          "admin"
+                        ]
+                      },
+                      "ownerName": {
+                        "nullable": true,
+                        "type": "string"
                       },
                       "conversationCount": {
                         "type": "integer",
@@ -205482,6 +206942,18 @@
                           "team"
                         ]
                       },
+                      "shareTeamNames": {
+                        "nullable": true,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "pinnedAt": {
+                        "nullable": true,
+                        "type": "string",
+                        "format": "date-time"
+                      },
                       "createdAt": {
                         "type": "string",
                         "format": "date-time"
@@ -205492,9 +206964,12 @@
                       "name",
                       "description",
                       "icon",
-                      "isOwner",
+                      "viewerRole",
+                      "ownerName",
                       "conversationCount",
                       "visibility",
+                      "shareTeamNames",
+                      "pinnedAt",
                       "createdAt"
                     ],
                     "additionalProperties": false
@@ -205740,6 +207215,369 @@
         }
       }
     },
+    "/api/projects/from-conversation": {
+      "post": {
+        "operationId": "createProjectFromConversation",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Turn an existing chat into a project: create the project, move the chat into it, and re-point the chat's files to the project. Only the chat's owner may do this, and only for a user chat not already in a project. `name` defaults to the chat title.\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`project:create`: Create projects",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "conversationId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  "description": {
+                    "nullable": true,
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "icon": {
+                    "nullable": true,
+                    "type": "string",
+                    "maxLength": 1000000
+                  }
+                },
+                "required": [
+                  "conversationId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "icon": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "viewerRole": {
+                      "type": "string",
+                      "enum": [
+                        "owner",
+                        "shared",
+                        "admin"
+                      ]
+                    },
+                    "ownerName": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "conversationCount": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "visibility": {
+                      "nullable": true,
+                      "type": "string",
+                      "enum": [
+                        "organization",
+                        "team"
+                      ]
+                    },
+                    "shareTeamNames": {
+                      "nullable": true,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "pinnedAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name",
+                    "description",
+                    "icon",
+                    "viewerRole",
+                    "ownerName",
+                    "conversationCount",
+                    "visibility",
+                    "shareTeamNames",
+                    "pinnedAt",
+                    "createdAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_validation_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authentication_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authorization_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_not_found_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_conflict_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_internal_server_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-required-permissions": {
+          "kind": "static",
+          "permissions": [
+            "project:create"
+          ]
+        }
+      }
+    },
     "/api/projects/{id}": {
       "get": {
         "operationId": "getProject",
@@ -205783,8 +207621,17 @@
                       "nullable": true,
                       "type": "string"
                     },
-                    "isOwner": {
-                      "type": "boolean"
+                    "viewerRole": {
+                      "type": "string",
+                      "enum": [
+                        "owner",
+                        "shared",
+                        "admin"
+                      ]
+                    },
+                    "ownerName": {
+                      "nullable": true,
+                      "type": "string"
                     },
                     "conversationCount": {
                       "type": "integer",
@@ -205798,6 +207645,18 @@
                         "organization",
                         "team"
                       ]
+                    },
+                    "shareTeamNames": {
+                      "nullable": true,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "pinnedAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time"
                     },
                     "createdAt": {
                       "type": "string",
@@ -205816,9 +207675,12 @@
                     "name",
                     "description",
                     "icon",
-                    "isOwner",
+                    "viewerRole",
+                    "ownerName",
                     "conversationCount",
                     "visibility",
+                    "shareTeamNames",
+                    "pinnedAt",
                     "createdAt",
                     "shareTeamIds"
                   ],
@@ -206068,7 +207930,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Update a project's name, description, and/or icon (owner only). Only the provided fields change.\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`project:update`: Edit project descriptions and sharing",
+        "description": "Update a project's name, description, and/or icon (owner or a project admin). Only the provided fields change.\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`project:update`: Edit project descriptions, instructions, and sharing",
         "requestBody": {
           "required": true,
           "content": {
@@ -206079,12 +207941,12 @@
                   "name": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 256
+                    "maxLength": 64
                   },
                   "description": {
                     "nullable": true,
                     "type": "string",
-                    "maxLength": 4096
+                    "maxLength": 200
                   },
                   "icon": {
                     "nullable": true,
@@ -206372,7 +208234,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Delete a project (owner only). Its chats survive as ordinary conversations; its files are deleted with it.\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`project:delete`: Delete projects",
+        "description": "Delete a project (owner or a project admin). Its chats survive as ordinary conversations; its files and scheduled tasks are deleted with it.\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`project:delete`: Delete projects",
         "parameters": [
           {
             "schema": {
@@ -206651,7 +208513,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Set who can see the project (owner only): the whole organization, specific teams, or nobody (visibility \"none\" unshares).\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`project:update`: Edit project descriptions and sharing",
+        "description": "Set who can see the project (owner or a project admin): the whole organization, specific teams, or nobody (visibility \"none\" unshares).\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`project:update`: Edit project descriptions, instructions, and sharing",
         "requestBody": {
           "required": true,
           "content": {
@@ -207285,6 +209147,578 @@
         }
       }
     },
+    "/api/projects/{id}/instructions": {
+      "get": {
+        "operationId": "getProjectInstructions",
+        "tags": [
+          "Projects"
+        ],
+        "description": "The project's instructions (markdown). Readable by anyone with project access; empty until the owner first saves it. The content is injected into the system prompt of every chat in the project.\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`project:read`: View projects and the chats inside them",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "content": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "content"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_validation_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authentication_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authorization_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_not_found_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_conflict_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_internal_server_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-required-permissions": {
+          "kind": "static",
+          "permissions": [
+            "project:read"
+          ]
+        }
+      },
+      "put": {
+        "operationId": "setProjectInstructions",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Set the project's instructions (owner only). The first save creates the instructions file; saving empty content keeps it but injects nothing.\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`project:update`: Edit project descriptions, instructions, and sharing",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "maxLength": 100000
+                  }
+                },
+                "required": [
+                  "content"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_validation_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authentication_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authorization_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_not_found_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_conflict_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_internal_server_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-required-permissions": {
+          "kind": "static",
+          "permissions": [
+            "project:update"
+          ]
+        }
+      }
+    },
     "/api/projects/{id}/conversations": {
       "get": {
         "operationId": "getProjectConversations",
@@ -207347,6 +209781,18 @@
                       },
                       "readOnly": {
                         "type": "boolean"
+                      },
+                      "scheduleTriggerId": {
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "scheduleRunId": {
+                        "nullable": true,
+                        "type": "string"
+                      },
+                      "scheduleName": {
+                        "nullable": true,
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -207357,10 +209803,569 @@
                       "origin",
                       "lastMessageAt",
                       "createdAt",
-                      "readOnly"
+                      "readOnly",
+                      "scheduleTriggerId",
+                      "scheduleRunId",
+                      "scheduleName"
                     ],
                     "additionalProperties": false
                   }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_validation_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authentication_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authorization_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_not_found_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_conflict_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_internal_server_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-required-permissions": {
+          "kind": "static",
+          "permissions": [
+            "project:read"
+          ]
+        }
+      }
+    },
+    "/api/projects/{id}/pin": {
+      "put": {
+        "operationId": "pinProject",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Pin a project to the current user's sidebar. Personal — does not affect other members. Any user who can read the project may pin it.\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`project:read`: View projects and the chats inside them",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_validation_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authentication_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_authorization_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_not_found_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_conflict_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "object",
+                      "properties": {
+                        "message": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "api_internal_server_error"
+                          ]
+                        },
+                        "internal_code": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "message",
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        },
+        "x-required-permissions": {
+          "kind": "static",
+          "permissions": [
+            "project:read"
+          ]
+        }
+      },
+      "delete": {
+        "operationId": "unpinProject",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Remove the current user's pin on a project. Idempotent; allowed even if the project was since unshared from the user.\n\nAuthentication:\n\nRequired. Use an authenticated browser session or send your Archestra API key in the `Authorization` header.\n\nAuthorization:\n\n`project:read`: View projects and the chats inside them",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "in": "path",
+            "name": "id",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Default Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": false
                 }
               }
             }
@@ -232479,6 +235484,11 @@
                               }
                             ]
                           },
+                          "annotations": {
+                            "nullable": true,
+                            "type": "object",
+                            "additionalProperties": {}
+                          },
                           "catalogId": {
                             "nullable": true,
                             "type": "string"
@@ -232568,6 +235578,7 @@
                           "id",
                           "name",
                           "description",
+                          "annotations",
                           "catalogId",
                           "createdAt",
                           "updatedAt",
@@ -234579,6 +237590,18 @@
             "in": "query",
             "name": "providerApiKeyId",
             "required": false
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "standard",
+                "passthrough"
+              ]
+            },
+            "in": "query",
+            "name": "keyType",
+            "required": false
           }
         ],
         "responses": {
@@ -234605,6 +237628,13 @@
                           "name": {
                             "type": "string",
                             "maxLength": 256
+                          },
+                          "keyType": {
+                            "type": "string",
+                            "enum": [
+                              "standard",
+                              "passthrough"
+                            ]
                           },
                           "secretId": {
                             "type": "string",
@@ -234714,6 +237744,7 @@
                           "id",
                           "organizationId",
                           "name",
+                          "keyType",
                           "secretId",
                           "tokenStart",
                           "scope",
@@ -235032,6 +238063,14 @@
                     "minLength": 1,
                     "maxLength": 256
                   },
+                  "keyType": {
+                    "default": "standard",
+                    "type": "string",
+                    "enum": [
+                      "standard",
+                      "passthrough"
+                    ]
+                  },
                   "expiresAt": {
                     "nullable": true
                   },
@@ -235052,7 +238091,7 @@
                     }
                   },
                   "providerApiKeys": {
-                    "minItems": 1,
+                    "default": [],
                     "type": "array",
                     "items": {
                       "type": "object",
@@ -235097,8 +238136,7 @@
                   }
                 },
                 "required": [
-                  "name",
-                  "providerApiKeys"
+                  "name"
                 ]
               }
             }
@@ -235123,6 +238161,13 @@
                     "name": {
                       "type": "string",
                       "maxLength": 256
+                    },
+                    "keyType": {
+                      "type": "string",
+                      "enum": [
+                        "standard",
+                        "passthrough"
+                      ]
                     },
                     "secretId": {
                       "type": "string",
@@ -235235,6 +238280,7 @@
                     "id",
                     "organizationId",
                     "name",
+                    "keyType",
                     "secretId",
                     "tokenStart",
                     "scope",
@@ -235508,6 +238554,14 @@
                     "minLength": 1,
                     "maxLength": 256
                   },
+                  "keyType": {
+                    "default": "standard",
+                    "type": "string",
+                    "enum": [
+                      "standard",
+                      "passthrough"
+                    ]
+                  },
                   "expiresAt": {
                     "nullable": true
                   },
@@ -235528,7 +238582,7 @@
                     }
                   },
                   "providerApiKeys": {
-                    "minItems": 1,
+                    "default": [],
                     "type": "array",
                     "items": {
                       "type": "object",
@@ -235570,8 +238624,7 @@
                   }
                 },
                 "required": [
-                  "name",
-                  "providerApiKeys"
+                  "name"
                 ]
               }
             }
@@ -235608,6 +238661,13 @@
                     "name": {
                       "type": "string",
                       "maxLength": 256
+                    },
+                    "keyType": {
+                      "type": "string",
+                      "enum": [
+                        "standard",
+                        "passthrough"
+                      ]
                     },
                     "secretId": {
                       "type": "string",
@@ -235717,6 +238777,7 @@
                     "id",
                     "organizationId",
                     "name",
+                    "keyType",
                     "secretId",
                     "tokenStart",
                     "scope",

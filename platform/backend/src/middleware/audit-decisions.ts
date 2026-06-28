@@ -189,6 +189,11 @@ export const AUDIT_DECISIONS = {
     audited: false,
     reason: "join: project share × team",
   },
+  projectPinsTable: {
+    audited: false,
+    reason:
+      "per-user pin on a project; personal preference, not an access change",
+  },
   conversationShareTeamsTable: {
     audited: false,
     reason: "join: conversation share × team",
@@ -306,10 +311,6 @@ export const AUDIT_DECISIONS = {
     audited: false,
     reason: "child of app; immutable version snapshot, parent audited",
   },
-  appTeamTable: {
-    audited: false,
-    reason: "join: app × team; parent (app) audited",
-  },
   appToolsTable: {
     audited: false,
     reason: "tools attached to an app; parent (app) carries the signal",
@@ -376,6 +377,13 @@ export const AUDIT_DECISIONS = {
   virtualApiKeyTeamsTable: {
     audited: false,
     reason: "join: virtual key × team; parent audited",
+  },
+  virtualApiKeyLlmProxiesTable: {
+    audited: false,
+    // Orphaned table — the passthrough-key "allowed LLM proxies" feature was
+    // removed; no code reads/writes it. Retained only so this release doesn't
+    // drop it under old pods; entry stays until the table is dropped (phase 2).
+    reason: "orphaned/unused; retained for zero-downtime, dropped in phase 2",
   },
 
   // =========================================================================

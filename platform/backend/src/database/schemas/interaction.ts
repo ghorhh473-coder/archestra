@@ -3,6 +3,7 @@ import type {
   SupportedProviderDiscriminator,
 } from "@archestra/shared";
 import {
+  type AnyPgColumn,
   index,
   integer,
   jsonb,
@@ -58,6 +59,16 @@ const interactionsTable = pgTable(
       { onDelete: "set null" },
     ),
     /**
+     * Optional passthrough virtual key (X-Archestra-Virtual-Key header) that
+     * authenticated the acting user for this request. Tracked independently from
+     * `virtualKeyId`: a request may carry a standard virtual key as its provider
+     * credential AND a passthrough key as the user identity.
+     */
+    passthroughVirtualKeyId: uuid("passthrough_virtual_key_id").references(
+      () => virtualApiKeysTable.id,
+      { onDelete: "set null" },
+    ),
+    /**
      * Snapshot of the environment this request ran under, resolved from the
      * agent's `environment_id` at interaction-creation time (see
      * InteractionModel.create). Null = no environment (the shared/default
@@ -104,6 +115,37 @@ const interactionsTable = pgTable(
     authenticatedAppName: varchar("authenticated_app_name"),
     request: jsonb("request").$type<InteractionRequest>().notNull(),
     processedRequest: jsonb("processed_request").$type<InteractionRequest>(),
+    /**
+     * Delta-encoding metadata (Claude Code / Claude Desktop interactions only).
+     * For eligible rows the `request`/`processedRequest` columns store only the
+     * suffix of `messages` that is new versus the parent row; the full request is
+     * rebuilt on read by walking the parent chain. Legacy / non-Claude rows leave
+     * all of these NULL and store the full request as before.
+     *
+     * threadId: sha256 hex of messages[0]. NULL marks a legacy/full row.
+     */
+    threadId: varchar("thread_id"),
+    /**
+     * Previous interaction in this (sessionId, threadId) branch this request
+     * continues. NULL = chain head (the row stores full messages even when
+     * threadId is set).
+     */
+    parentId: uuid("parent_id").references(
+      (): AnyPgColumn => interactionsTable.id,
+      { onDelete: "set null" },
+    ),
+    /** # of leading request.messages shared with the parent's reconstructed messages. */
+    requestSharedPrefix: integer("request_shared_prefix"),
+    /** Same as requestSharedPrefix but for processedRequest; NULL when no processedRequest. */
+    processedRequestSharedPrefix: integer("processed_request_shared_prefix"),
+    /**
+     * Index of the last message of the FULL request (messages.length - 1), used
+     * to find a parent on the write path. The matching last-message hash is NOT
+     * stored: a delta row always ends at the full request's last message, so it
+     * is compared directly against the candidate's stored delta. (The hash is
+     * kept only in the in-memory tip cache for the fast-path validity check.)
+     */
+    requestLastMessageIdx: integer("request_last_message_idx"),
     response: jsonb("response").$type<InteractionResponse>().notNull(),
     dualLlmAnalyses: jsonb("dual_llm_analyses").$type<DualLlmAnalysis[]>(),
     unsafeContextBoundary: jsonb(
@@ -156,6 +198,12 @@ const interactionsTable = pgTable(
       table.sessionId,
       table.createdAt.desc(),
     ),
+    // Serves delta-encoding parent resolution and chain loads:
+    // WHERE session_id = ? AND thread_id = ? ORDER BY created_at DESC.
+    sessionThreadCreatedAtIdx: index(
+      "interactions_session_thread_created_at_idx",
+    ).on(table.sessionId, table.threadId, table.createdAt.desc()),
+    parentIdIdx: index("interactions_parent_id_idx").on(table.parentId),
     // Note: Additional pg_trgm GIN indexes for search are created in migration 0116_pg_trgm_indexes.sql:
     // - interactions_request_trgm_idx: GIN index on (request::text)
     // - interactions_response_trgm_idx: GIN index on (response::text)

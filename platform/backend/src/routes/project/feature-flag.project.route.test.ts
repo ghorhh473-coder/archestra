@@ -44,4 +44,23 @@ describe("project routes are not served when projects is off", () => {
     });
     expect(response.statusCode).toBe(404);
   });
+
+  test("GET /api/projects/:id/instructions 404s", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/projects/00000000-0000-0000-0000-000000000000/instructions",
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  test("POST /api/projects/from-conversation 404s", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/projects/from-conversation",
+      payload: {
+        conversationId: "00000000-0000-0000-0000-000000000000",
+      },
+    });
+    expect(response.statusCode).toBe(404);
+  });
 });

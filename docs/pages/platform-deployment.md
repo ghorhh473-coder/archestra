@@ -819,6 +819,10 @@ The following environment variables can be used to configure Archestra Platform.
   - `permissive`: Tools are allowed, unless a specific policy is set for them.
   - `restrictive`: Tools are forbidden, unless a specific policy is set for them.
 
+- **`ARCHESTRA_BETA`** - Master switch for ships-dark preview features. When `true`, every `ARCHESTRA_*_ENABLED` product-feature gate below defaults on at once — Agent Skills, Agent Environments, agent hooks, the code runtime, MCP Apps, and Projects. An explicit per-flag value always wins, so `ARCHESTRA_BETA=true` with `ARCHESTRA_APPS_ENABLED=false` keeps Apps off. Beta only flips intent — the sandbox and agent hooks still need a Dagger runner host to run. Does not touch credential/auth-mode toggles (e.g. Bedrock IAM, Azure/Vertex Entra), enterprise-licensed features, or always-on defaults (DCR, chat secret scanning, knowledge-base hybrid search).
+  - Default: `false`
+  - Values: `true`, `false`
+
 - **`ARCHESTRA_AGENTS_SKILLS_ENABLED`** - Enables Agent Skills — reusable `SKILL.md` instruction sets that agents load on demand. When off, the Skills page and its sidebar link are hidden and the feature cannot be enabled for an organization.
   - Default: `false`
   - Values: `true`, `false`
@@ -844,6 +848,43 @@ The following environment variables can be used to configure Archestra Platform.
 
 - **`ARCHESTRA_SKILL_MARKETPLACE_CACHE_DIR`** - Directory holding materialized marketplace git repos. The cache is a derived view of the `skill_share_link_revision` history — replays are byte-identical, so wiping is safe but triggers a full rebuild on next clone. In prod, point this at a persistent volume to avoid the rebuild on container restarts.
   - Default: `~/.archestra/skill-marketplace-cache`
+
+### My Files Storage
+
+My Files is the persistent byte-storage layer used by Projects and the `search_files` / `save_result` tools. The active provider is selected at write time and stamped per row, so switching providers affects only new writes — existing files remain readable from their original backend.
+
+- **`ARCHESTRA_FILE_STORAGE_PROVIDER`** - Storage backend for My Files.
+  - Default: `db`
+  - Options: `db` (Postgres bytea), `filesystem` (mounted volume / PVC), `s3` (S3-compatible object store)
+
+- **`ARCHESTRA_FILE_STORAGE_FILESYSTEM_ROOT`** - Absolute path to the root directory for the `filesystem` provider (e.g. a PVC mount).
+  - Required when: `ARCHESTRA_FILE_STORAGE_PROVIDER=filesystem`
+  - Example: `/var/archestra/files`
+
+- **`ARCHESTRA_FILE_STORAGE_S3_BUCKET`** - S3 bucket name for the `s3` provider.
+  - Required when: `ARCHESTRA_FILE_STORAGE_PROVIDER=s3`
+  - Example: `my-archestra-files`
+
+- **`ARCHESTRA_FILE_STORAGE_S3_REGION`** - AWS region for the S3 bucket.
+  - Default: `us-east-1`
+  - Example: `eu-west-1`
+
+- **`ARCHESTRA_FILE_STORAGE_S3_ENDPOINT`** - Custom endpoint URL for S3-compatible stores such as MinIO or Cloudflare R2.
+  - Optional: Leave blank for standard AWS S3
+  - Example: `http://minio:9000` (MinIO), `https://<account-id>.r2.cloudflarestorage.com` (R2)
+
+- **`ARCHESTRA_FILE_STORAGE_S3_FORCE_PATH_STYLE`** - Use path-style addressing instead of virtual-hosted-style.
+  - Required for MinIO: set to `true`
+  - Default: `false` (virtual-hosted style, correct for AWS S3 and most S3-compatible stores)
+
+- **`ARCHESTRA_FILE_STORAGE_S3_ACCESS_KEY_ID`** and **`ARCHESTRA_FILE_STORAGE_S3_SECRET_ACCESS_KEY`** - Static AWS credentials for the S3 provider.
+  - Optional: When both are omitted, the AWS default credential chain is used (environment variables, `~/.aws/credentials`, IAM instance profile, IRSA, etc.)
+  - Use static credentials for self-hosted stores (MinIO) or when running outside AWS without IRSA
+
+- **`ARCHESTRA_FILE_STORAGE_S3_KEY_PREFIX`** - Optional object key prefix (folder) within the bucket.
+  - Optional: Leave blank to write objects at the bucket root
+  - Useful for sharing one bucket across multiple Archestra instances (e.g. `staging/` vs `production/`)
+  - Example: `archestra-prod/`
 
 - **`ARCHESTRA_ANALYTICS`** - Controls PostHog analytics for product improvements.
   - Default: `enabled`
@@ -1378,15 +1419,5 @@ The audit log records administrative actions (mutations via `/api/*` and auth ev
 
 ### Enterprise Licensing
 
-To learn more about enterprise licensing, please reach out to [sales@archestra.ai](mailto:sales@archestra.ai).
+To learn more about enterprise licensing, see the [pricing model](/docs/platform-pricing-model).
 
-- **`ARCHESTRA_ENTERPRISE_LICENSE_ACTIVATED`** - Activates enterprise features in Archestra.
-  - Set to `true` to enable the enterprise license
-  - Required as a prerequisite for all other enterprise feature flags
-
-- **`ARCHESTRA_ENTERPRISE_LICENSE_KNOWLEDGE_BASE_ACTIVATED`** - Enables advanced access-control on knowledge connectors. Without this flag, Knowledge Base connectors are limited to org-wide visibility.
-  - Requires the core enterprise license (`ARCHESTRA_ENTERPRISE_LICENSE_ACTIVATED=true`)
-
-- **`ARCHESTRA_ENTERPRISE_LICENSE_FULL_WHITE_LABELING`** - Enables full white-labeling (removes "Powered by Archestra" attribution).
-  - Set to `true` to enable
-  - Requires the core enterprise license (`ARCHESTRA_ENTERPRISE_LICENSE_ACTIVATED=true`)

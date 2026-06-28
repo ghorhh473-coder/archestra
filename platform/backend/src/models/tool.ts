@@ -30,6 +30,7 @@ import {
   isNull,
   ne,
   or,
+  type SQL,
   sql,
 } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
@@ -38,7 +39,7 @@ import { getArchestraMcpTools } from "@/archestra-mcp-server";
 import { archestraMcpBranding } from "@/archestra-mcp-server/branding";
 import { getArchestraMcpCatalogMetadata } from "@/archestra-mcp-server/metadata";
 import config from "@/config";
-import db, { schema } from "@/database";
+import db, { schema, type Transaction } from "@/database";
 import { notDeleted } from "@/database/schemas/soft-deletable-table";
 import { ARCHESTRA_TOOL_NAME_UNIQUE_INDEX } from "@/database/schemas/tool";
 import {
@@ -91,8 +92,8 @@ class ToolModel {
     return serverName !== null ? toolName : slugifiedName;
   }
 
-  static async create(tool: InsertTool): Promise<Tool> {
-    const [createdTool] = await db
+  static async create(tool: InsertTool, tx?: Transaction): Promise<Tool> {
+    const [createdTool] = await (tx ?? db)
       .insert(schema.toolsTable)
       .values(tool)
       .returning();
@@ -625,6 +626,21 @@ class ToolModel {
       return [];
     }
 
+    // Catalog visibility is broader than install access: an org-scoped catalog
+    // is visible to every member, but its only installs may be other users'
+    // personal servers. Narrow the discovery space to catalogs the caller has
+    // an accessible install of (own personal + team + org) so search_tools /
+    // run_tool cannot reach another user's personal server. The built-in
+    // Archestra catalog runs in-process with no install row, so it stays in.
+    const installedCatalogIds =
+      await McpServerModel.getAccessibleInstallCatalogIds(params.userId);
+    const scopedCatalogIds = catalogIds.filter(
+      (id) => id === ARCHESTRA_MCP_CATALOG_ID || installedCatalogIds.has(id),
+    );
+    if (scopedCatalogIds.length === 0) {
+      return [];
+    }
+
     // Secondary sort on id keeps the ordering deterministic when createdAt
     // ties (bulk-inserted MCP tools share a timestamp), so search_tools and
     // run_tool auto-assignment resolve a duplicate name to the same row.
@@ -633,7 +649,7 @@ class ToolModel {
       .from(schema.toolsTable)
       .where(
         and(
-          inArray(schema.toolsTable.catalogId, catalogIds),
+          inArray(schema.toolsTable.catalogId, scopedCatalogIds),
           eq(schema.toolsTable.clonedPendingDiscovery, false),
           toolInEnvironmentPredicate(params.environmentId),
           params.name !== undefined
@@ -1978,19 +1994,6 @@ class ToolModel {
   }
 
   /**
-   * Delete all tools for a specific catalog item
-   * Used when the last MCP server installation for a catalog is removed
-   * Returns the number of tools deleted
-   */
-  static async deleteByCatalogId(catalogId: string): Promise<number> {
-    const result = await db
-      .delete(schema.toolsTable)
-      .where(eq(schema.toolsTable.catalogId, catalogId));
-
-    return result.rowCount || 0;
-  }
-
-  /**
    * Sync tools for a catalog item - updates existing tools and creates new ones.
    * Unlike bulkCreateToolsIfNotExists, this method:
    * - Matches tools by their RAW name (the part after `__`), not the full slugified name
@@ -2767,6 +2770,7 @@ class ToolModel {
         name: schema.toolsTable.name,
         description: schema.toolsTable.description,
         parameters: schema.toolsTable.parameters,
+        meta: schema.toolsTable.meta,
         catalogId: schema.toolsTable.catalogId,
         createdAt: schema.toolsTable.createdAt,
         updatedAt: schema.toolsTable.updatedAt,
@@ -2904,6 +2908,12 @@ class ToolModel {
       name: tool.name as string,
       description: tool.description as string | null,
       parameters: (tool.parameters as Record<string, unknown>) ?? {},
+      // Discovery stores MCP metadata as { _meta, annotations } in `meta`.
+      annotations:
+        ((tool.meta as Record<string, unknown> | null)?.annotations as Record<
+          string,
+          unknown
+        > | null) ?? null,
       catalogId: tool.catalogId as string | null,
       createdAt: tool.createdAt as Date,
       updatedAt: tool.updatedAt as Date,
@@ -3036,4 +3046,19 @@ export function parseArchestraBuiltInName(toolName: string): {
 
 function extractArchestraBuiltInShortName(toolName: string): string | null {
   return parseArchestraBuiltInName(toolName).shortName;
+}
+
+/**
+ * SQL expression resolving a tool's MCP App `ui://` resource URI, or NULL when
+ * the tool is not a UI app. Canonical `_meta.ui.resourceUri` first, then the
+ * legacy flat `ui/resourceUri` key; both must use the `ui://` scheme. Shared by
+ * the external-apps listing and the catalog list's `providesUi` flag so the two
+ * never drift.
+ */
+export function toolUiResourceUriSql(): SQL<string | null> {
+  const meta = schema.toolsTable.meta;
+  return sql<string | null>`coalesce(
+    case when ${meta}->'_meta'->'ui'->>'resourceUri' like 'ui://%' then ${meta}->'_meta'->'ui'->>'resourceUri' end,
+    case when ${meta}->'_meta'->>'ui/resourceUri' like 'ui://%' then ${meta}->'_meta'->>'ui/resourceUri' end
+  )`;
 }

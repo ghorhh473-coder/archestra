@@ -1,3 +1,4 @@
+// This file contains Enterprise regions licensed under LICENSE_ENTERPRISE.
 "use client";
 import {
   COMMUNITY_DOCS_URL,
@@ -11,8 +12,10 @@ import {
   AppWindow,
   BookOpen,
   Bot,
+  Boxes,
   Bug,
   Cable,
+  CircleDollarSign,
   Database,
   FolderKanban,
   Github,
@@ -24,9 +27,11 @@ import {
   Network,
   PencilRuler,
   Route,
+  ShieldCheck,
   Slack,
   Sparkles,
   Star,
+  Waypoints,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -119,6 +124,7 @@ function routeSidebarMode(pathname: string): SidebarMode | null {
     "/knowledge",
     "/audit",
     "/connection",
+    "/connection_beta",
   ];
   if (
     studioPrefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`))
@@ -202,10 +208,7 @@ const contentNavGroups: NavGroup[] = [
         title: "Agents",
         url: "/agents",
         icon: Bot,
-        customIsActive: (pathname: string) =>
-          pathname.startsWith("/agents") &&
-          !pathname.startsWith("/agents/triggers") &&
-          !pathname.startsWith("/agents/skills"),
+        customIsActive: (pathname: string) => pathname.startsWith("/agents"),
         subItems: [
           {
             title: "Scheduled Tasks",
@@ -217,17 +220,16 @@ const contentNavGroups: NavGroup[] = [
       },
       {
         title: "Skills",
-        url: "/agents/skills",
+        url: "/skills",
         icon: Sparkles,
-        customIsActive: (pathname: string) =>
-          pathname.startsWith("/agents/skills"),
+        customIsActive: (pathname: string) => pathname.startsWith("/skills"),
       },
       {
         title: "Messaging Channels",
-        url: "/agents/triggers",
+        url: "/messaging-channels",
         icon: Inbox,
         customIsActive: (pathname: string) =>
-          pathname.startsWith("/agents/triggers"),
+          pathname.startsWith("/messaging-channels"),
       },
     ],
   },
@@ -238,7 +240,7 @@ const contentNavGroups: NavGroup[] = [
         title: "Apps",
         url: "/apps",
         icon: AppWindow,
-        customIsActive: (pathname: string) => pathname.startsWith("/apps"),
+        customIsActive: (pathname: string) => pathname === "/apps",
       },
     ],
   },
@@ -246,30 +248,32 @@ const contentNavGroups: NavGroup[] = [
     label: "MCP & Tools",
     items: [
       {
-        title: "MCPs",
+        title: "Guardrails",
+        url: "/mcp/tool-guardrails",
+        icon: ShieldCheck,
+        testId: E2eTestId.SidebarNavGuardrails,
+        customIsActive: (pathname: string) =>
+          pathname.startsWith("/mcp/tool-guardrails"),
+      },
+      {
+        title: "MCP Registry",
         url: "/mcp/registry",
         icon: Route,
         customIsActive: (pathname: string) =>
           pathname.startsWith("/mcp/registry"),
+      },
+      {
+        title: "MCP Gateways",
+        url: "/mcp/gateways",
+        icon: Waypoints,
+        customIsActive: (pathname: string) =>
+          pathname.startsWith("/mcp/gateways"),
         subItems: [
-          {
-            title: "Gateways",
-            url: "/mcp/gateways",
-            customIsActive: (pathname: string) =>
-              pathname.startsWith("/mcp/gateways"),
-          },
           {
             title: "Credentials",
             url: "/mcp/credentials/oauth-clients",
             customIsActive: (pathname: string) =>
               pathname.startsWith("/mcp/credentials"),
-          },
-          {
-            title: "Guardrails",
-            url: "/mcp/tool-guardrails",
-            testId: E2eTestId.SidebarNavGuardrails,
-            customIsActive: (pathname: string) =>
-              pathname.startsWith("/mcp/tool-guardrails"),
           },
         ],
       },
@@ -285,22 +289,25 @@ const contentNavGroups: NavGroup[] = [
         customIsActive: (pathname: string) => pathname === "/llm/proxies",
         subItems: [
           {
-            title: "Model Providers",
-            url: "/llm/model-providers/api-keys",
-            customIsActive: (pathname: string) =>
-              pathname.startsWith("/llm/model-providers"),
-          },
-          {
             title: "Credentials",
             url: "/llm/credentials/virtual-keys",
             customIsActive: (pathname: string) =>
               pathname.startsWith("/llm/credentials"),
           },
-          {
-            title: "Costs & Limits",
-            url: "/llm/costs",
-          },
         ],
+      },
+      {
+        title: "Model Providers",
+        url: "/llm/model-providers",
+        icon: Boxes,
+        customIsActive: (pathname: string) =>
+          pathname.startsWith("/llm/model-providers") ||
+          pathname.startsWith("/llm/models"),
+      },
+      {
+        title: "Costs & Limits",
+        url: "/llm/costs",
+        icon: CircleDollarSign,
       },
     ],
   },
@@ -586,7 +593,13 @@ export function AppSidebar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const isAuthenticated = useIsAuthenticated();
-  const showCommunityLinks = !config.enterpriseFeatures.fullWhiteLabeling;
+  // SPDX-SnippetBegin
+  // SPDX-SnippetCopyrightText: 2026 Archestra Inc.
+  // SPDX-License-Identifier: LicenseRef-Archestra-Enterprise
+  // Show community menu items unless the Enterprise license env var is set
+  // (the small-team free tier doesn't hide them).
+  const showCommunityLinks = !config.enterpriseFeatures.core;
+  // SPDX-SnippetEnd
   // GitHub stars are cosmetic and external, so defer them until after the
   // authenticated shell data has had a chance to load.
   const { data: starCount } = useGithubStars({
@@ -613,6 +626,9 @@ export function AppSidebar() {
   const chatListFadeIn = useOnce();
   // Apps are gated behind the ARCHESTRA_APPS_ENABLED env var.
   const appsEnabled = useFeature("appsEnabled") === true;
+  // ARCHESTRA_BETA master switch — when on, the new connection page is the
+  // default Connect destination.
+  const betaEnabled = useFeature("betaEnabled") === true;
 
   // Projects exist only when the projects feature is on.
   const filteredChatsNavItems = React.useMemo(
@@ -625,6 +641,11 @@ export function AppSidebar() {
 
   // Filter nav groups based on connect permissions and feature flags
   const filteredNavGroups = React.useMemo(() => {
+    // With ARCHESTRA_BETA on, these nav items point at their beta routes.
+    const betaNavUrls: Record<string, string> = {
+      Connect: "/connection_beta",
+      "MCP Registry": "/mcp/registry/beta",
+    };
     return contentNavGroups
       .filter((group) => group.label !== "Apps" || appsEnabled)
       .map((group) => ({
@@ -634,24 +655,27 @@ export function AppSidebar() {
             if (item.title === "Connect" && !showConnect) return false;
             // Skills are gated behind the ARCHESTRA_AGENTS_SKILLS_ENABLED env
             // var. It's a top-level item now, so gate it here (not in subItems).
-            if (item.url === "/agents/skills" && !skillsEnabled) return false;
+            if (item.url === "/skills" && !skillsEnabled) return false;
             return true;
           })
-          .map((item) =>
-            item.subItems
+          .map((item) => {
+            const betaUrl = betaEnabled ? betaNavUrls[item.title] : undefined;
+            const resolved = betaUrl ? { ...item, url: betaUrl } : item;
+            return resolved.subItems
               ? {
-                  ...item,
-                  subItems: item.subItems.filter((sub) => {
+                  ...resolved,
+                  subItems: resolved.subItems.filter((sub) => {
                     // With projects on, schedules are managed per-project on the
-                    // project detail page, so the standalone entry is hidden.
+                    // project detail page (the per-project runs view), so the
+                    // standalone entry is hidden.
                     if (sub.url === "/scheduled-tasks") return !projectsEnabled;
                     return true;
                   }),
                 }
-              : item,
-          ),
+              : resolved;
+          }),
       }));
-  }, [showConnect, skillsEnabled, appsEnabled, projectsEnabled]);
+  }, [showConnect, skillsEnabled, appsEnabled, projectsEnabled, betaEnabled]);
 
   return (
     <Sidebar collapsible="icon">
